@@ -64,7 +64,7 @@ export default function SplashScreen() {
 
   const handleEnter = () => {
     setExiting(true)
-    setTimeout(() => router.push('/simulation'), 900)
+    setTimeout(() => router.push('/realm'), 900)
   }
 
   return (
