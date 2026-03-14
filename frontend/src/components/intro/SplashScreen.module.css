@@ -1,0 +1,357 @@
+/* ── Root container ──────────────────────────────────────────────── */
+.root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #22170e 0%, #0f0906 45%, #060403 100%);
+}
+
+/* Layered fire-glow background (purely CSS, no image needed) */
+.bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 54% 36% at 50% 60%, rgba(128, 88, 42, 0.28) 0%, transparent 72%),
+    radial-gradient(ellipse 92% 58% at 50% 50%, rgba(76, 52, 26, 0.34) 0%, transparent 82%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Opening cinematic hero ─────────────────────────────────────── */
+.heroStage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.heroCanvas {
+  position: relative;
+  width: min(1320px, 100vw);
+  height: min(900px, 100vh);
+  box-shadow:
+    0 35px 90px rgba(0, 0, 0, 0.7),
+    0 0 54px rgba(160, 124, 72, 0.12);
+}
+
+.heroAtmosphere {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(192, 149, 91, 0.16) 0%, rgba(0, 0, 0, 0) 65%);
+  pointer-events: none;
+}
+
+.fireBridge {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.fireBloom {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: min(760px, 86vw);
+  height: min(420px, 52vh);
+  transform: translate(-50%, -50%);
+  background:
+    radial-gradient(circle at center, rgba(244, 190, 124, 0.6) 0%, rgba(196, 112, 48, 0.58) 26%, rgba(118, 52, 16, 0.28) 48%, rgba(0, 0, 0, 0) 72%);
+  filter: blur(8px);
+}
+
+.smokeVeil {
+  position: absolute;
+  inset: -6%;
+  background:
+    radial-gradient(ellipse at 50% 56%, rgba(92, 70, 58, 0.72) 0%, rgba(48, 34, 29, 0.38) 35%, rgba(11, 8, 7, 0) 72%),
+    radial-gradient(ellipse at 40% 44%, rgba(134, 108, 89, 0.32) 0%, rgba(20, 15, 14, 0) 68%),
+    radial-gradient(ellipse at 62% 42%, rgba(114, 92, 79, 0.26) 0%, rgba(20, 15, 14, 0) 68%);
+  filter: blur(10px);
+}
+
+/* ── Text / UI overlay ──────────────────────────────────────────── */
+.overlay {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  text-align: center;
+  padding: 20px;
+  /* push overlay down so the crown shows above it */
+  margin-top: 52vh;
+}
+
+.finalReveal {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  pointer-events: none;
+  padding: 20px;
+}
+
+.finalFxLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.finalSmokeA,
+.finalSmokeB {
+  position: absolute;
+  inset: -12%;
+  filter: blur(12px);
+}
+
+.finalSmokeA {
+  background:
+    radial-gradient(ellipse at 36% 62%, rgba(96, 72, 56, 0.44) 0%, rgba(20, 14, 11, 0) 64%),
+    radial-gradient(ellipse at 64% 56%, rgba(82, 62, 49, 0.34) 0%, rgba(20, 14, 11, 0) 66%);
+  animation: smokeShiftA 6.4s ease-in-out infinite;
+}
+
+.finalSmokeB {
+  background:
+    radial-gradient(ellipse at 52% 72%, rgba(112, 82, 56, 0.32) 0%, rgba(20, 14, 11, 0) 68%),
+    radial-gradient(ellipse at 48% 42%, rgba(138, 98, 64, 0.18) 0%, rgba(20, 14, 11, 0) 58%);
+  animation: smokeShiftB 7.4s ease-in-out infinite;
+}
+
+.finalEmber {
+  position: absolute;
+  bottom: 14%;
+  border-radius: 999px;
+  background: radial-gradient(circle at 40% 40%, rgba(255, 224, 170, 0.9) 0%, rgba(226, 135, 66, 0.9) 55%, rgba(121, 57, 26, 0.82) 100%);
+  box-shadow: 0 0 8px rgba(212, 123, 62, 0.5);
+  animation-name: emberRise;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+  opacity: 0;
+}
+
+
+.revealFrame {
+  position: relative;
+  width: min(1100px, 92vw);
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(183, 146, 92, 0.5);
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.75),
+    0 0 40px rgba(183, 146, 92, 0.2),
+    inset 0 0 60px rgba(110, 76, 40, 0.17);
+  background: radial-gradient(circle at 50% 50%, #1f140d 0%, #090604 90%);
+  overflow: hidden;
+}
+
+.revealPiece {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-repeat: no-repeat;
+  will-change: transform, opacity, filter;
+}
+
+.revealGlow {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(circle at center, rgba(234, 199, 145, 0.52) 0%, rgba(168, 123, 76, 0.24) 28%, rgba(0, 0, 0, 0) 70%);
+  pointer-events: none;
+}
+
+/* ── Decorative ornament lines ──────────────────────────────────── */
+.ornament {
+  color: #c9a630;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  opacity: 0.65;
+  user-select: none;
+  transform-origin: center;
+}
+
+/* ── Main title ─────────────────────────────────────────────────── */
+.title {
+  font-family: var(--font-cinzel-decorative), 'Cinzel Decorative', serif;
+  font-size: clamp(2.4rem, 6.5vw, 5.2rem);
+  font-weight: 900;
+  /* metallic gold gradient */
+  background: linear-gradient(180deg, #fff0a0 0%, #f0c040 20%, #c9a630 55%, #8b6914 80%, #c9a630 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  filter: drop-shadow(0 0 28px rgba(201, 166, 48, 0.55));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.02em;
+}
+
+/* ── Subtitle ───────────────────────────────────────────────────── */
+.subtitle {
+  font-family: var(--font-cinzel), 'Cinzel', serif;
+  font-size: clamp(0.72rem, 1.8vw, 1rem);
+  font-weight: 600;
+  color: #a88353;
+  text-transform: uppercase;
+  /* letterSpacing animated by framer-motion */
+}
+
+/* ── Gold divider line ──────────────────────────────────────────── */
+.divider {
+  width: min(380px, 68vw);
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, #c9a630 30%, #ffe566 50%, #c9a630 70%, transparent 100%);
+  transform-origin: center;
+}
+
+/* ── House names row ────────────────────────────────────────────── */
+.housesRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.houseName {
+  font-family: var(--font-cinzel), 'Cinzel', serif;
+  font-size: clamp(0.6rem, 1.4vw, 0.82rem);
+  color: #a08030;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-transform: uppercase;
+}
+
+.dot {
+  color: #6d4d2a;
+  font-size: 0.45rem;
+  line-height: 1;
+}
+
+/* ── Enter the Realm button ─────────────────────────────────────── */
+.enterBtn {
+  margin-top: 6px;
+  padding: 13px 52px;
+  background: transparent;
+  border: 1px solid #c9a630;
+  color: #c9a630;
+  font-family: var(--font-cinzel), 'Cinzel', serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  cursor: pointer;
+  position: relative;
+  outline: none;
+  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+  pointer-events: auto;
+}
+
+.enterBtn::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(201, 166, 48, 0.2);
+  pointer-events: none;
+}
+
+.enterBtn:hover {
+  background: rgba(201, 166, 48, 0.08);
+  color: #fff0a0;
+  box-shadow:
+    0 0 32px rgba(201, 166, 48, 0.35),
+    inset 0 0 18px rgba(201, 166, 48, 0.06);
+}
+
+/* ── Full-screen black exit overlay ────────────────────────────── */
+.exitOverlay {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 100;
+}
+
+@keyframes emberRise {
+  0% {
+    transform: translateY(0) scale(0.5);
+    opacity: 0;
+  }
+  16% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(-170px) scale(1.08);
+    opacity: 0;
+  }
+}
+
+@keyframes smokeShiftA {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translate3d(-1.4%, -1.1%, 0);
+    opacity: 0.9;
+  }
+}
+
+@keyframes smokeShiftB {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.58;
+  }
+  50% {
+    transform: translate3d(1.2%, -0.8%, 0);
+    opacity: 0.8;
+  }
+}
+
+@media (max-width: 900px) {
+  .overlay {
+    margin-top: 48vh;
+  }
+
+  .heroCanvas {
+    width: 100vw;
+    height: 80vh;
+  }
+
+  .finalReveal {
+    gap: 18px;
+  }
+
+  .revealFrame {
+    width: min(980px, 95vw);
+  }
+
+  .enterBtn {
+    padding: 12px 30px;
+    letter-spacing: 0.24em;
+    font-size: 0.78rem;
+  }
+}
