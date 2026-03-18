@@ -1,5 +1,6 @@
-import { RealmMap } from '@/components/map/RealmMap'
+import GOTMap from '@/components/map/GOTMap'
+import '@/styles/map.css'
 
 export default function SimulationPage() {
-  return <RealmMap />
+  return <GOTMap />
 }
