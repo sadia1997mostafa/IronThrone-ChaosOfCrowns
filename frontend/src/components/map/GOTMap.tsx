@@ -8,6 +8,7 @@ import BattleSkirmish3D from './BattleSkirmish3D'
 import ClashEffect from './ClashEffect'
 import FloatingStatText from './FloatingStatText'
 import UnitToken from './UnitToken'
+import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
 
 const VIEW_BOX = '0 0 1536 1024'
@@ -98,6 +99,12 @@ export default function GOTMap() {
     'War table awakened. Pick a territory to inspect and command.',
     'Tip: Select an attacker, then click a neighboring enemy region to trigger a cinematic clash.',
   ])
+  const [turn, setTurn] = useState(1)
+  const [currentFaction, setCurrentFaction] = useState<HouseId>('stark')
+  const [simulationPhase, setSimulationPhase] = useState<'idle' | 'battle' | 'ending'>('idle')
+  const [gold, setGold] = useState(850)
+  const [food, setFood] = useState(720)
+  const [influence, setInfluence] = useState(480)
   const floatingIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
 
@@ -372,7 +379,22 @@ export default function GOTMap() {
   }
 
   return (
-    <div className="map-page">
+    <>
+      <SimulationBar
+        turn={turn}
+        currentFaction={currentFaction}
+        phase={simulationPhase}
+        gold={gold}
+        food={food}
+        influence={influence}
+        factionColors={{
+          stark: HOUSE_META.stark.color,
+          lannister: HOUSE_META.lannister.color,
+          targaryen: HOUSE_META.targaryen.color,
+          tyrell: HOUSE_META.tyrell.color,
+        }}
+      />
+      <div className="map-page">
       <div
         className={`map-container ${isCinematicActive ? 'is-cinematic' : ''} ${battlePhase === 'impact' ? 'is-impact' : ''}`}
       >
@@ -552,6 +574,7 @@ export default function GOTMap() {
           onClose={closeBattleModal}
         />
       ) : null}
-    </div>
+      </div>
+    </>
   )
 }
