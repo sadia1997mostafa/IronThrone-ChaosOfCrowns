@@ -114,9 +114,11 @@ export default function GOTMap() {
   )
 
   const selectedData = selectedRegion ? regions[selectedRegion] : null
-  const canRecruit = Boolean(selectedRegion) && !isBattleModalOpen && !isResolvingBattle
-  const canFortify = Boolean(selectedRegion) && !isBattleModalOpen && !isResolvingBattle
-  const canPrimeAttacker = Boolean(selectedRegion) && !isBattleModalOpen && !isResolvingBattle
+  const isSelectedOwnedByCurrentFaction = selectedData && selectedData.houseId === currentFaction
+  const canRecruit = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
+  const canFortify = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
+  const canPrimeAttacker = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
+  const canGatherResources = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
 
   const activePathPoints = battlePath
     ? {
@@ -309,6 +311,57 @@ export default function GOTMap() {
     setTimeout(() => setFortifiedRegion((prev) => (prev === selectedRegion ? null : prev)), 1300)
   }
 
+  const handleGatherResources = () => {
+    if (!selectedRegion) return
+    const goldBonus = 40 + Math.floor(Math.random() * 80)
+    const foodBonus = 60 + Math.floor(Math.random() * 100)
+    const influenceBonus = 20 + Math.floor(Math.random() * 45)
+    
+    setGold((prev) => prev + goldBonus)
+    setFood((prev) => prev + foodBonus)
+    setInfluence((prev) => prev + influenceBonus)
+    
+    const pos = regions[selectedRegion].tokenPosition
+    addFloatingText(pos.x, pos.y, `+${foodBonus} Food`, 'positive')
+    addEvent(
+      `${regions[selectedRegion].name} harvests resources: +${goldBonus} Gold, +${foodBonus} Food, +${influenceBonus} Influence.`
+    )
+  }
+
+  const getHouseOrder = (): HouseId[] => ['stark', 'lannister', 'tyrell', 'targaryen']
+
+  const handleEndTurn = async () => {
+    if (isBattleModalOpen || isResolvingBattle) return
+
+    const turnOrder = getHouseOrder()
+    const currentIndex = turnOrder.indexOf(currentFaction)
+    const nextFaction = turnOrder[(currentIndex + 1) % turnOrder.length]
+
+    // Auto-generate some events for the turn change
+    if (nextFaction === 'stark') {
+      setTurn((prev) => prev + 1)
+      addEvent('═══════════════════════════════════')
+    }
+
+    setCurrentFaction(nextFaction)
+    setSimulationPhase('idle')
+    setSelectedRegion(null)
+    setAttackSource(null)
+    clearBattleVisuals()
+
+    // Grant resources to the new faction regions
+    const factionRegions = availableRegions.filter((rid) => regions[rid].houseId === nextFaction)
+    if (factionRegions.length > 0) {
+      const resourcePerRegion = 30
+      setGold((prev) => prev + resourcePerRegion * factionRegions.length)
+      setFood((prev) => prev + 45 * factionRegions.length)
+      setInfluence((prev) => prev + 15 * factionRegions.length)
+      addEvent(`${HOUSE_META[nextFaction].label} gains income from ${factionRegions.length} controlled regions.`)
+    }
+
+    await wait(600)
+  }
+
   const resolveBattle = async () => {
     if (!battleContext || isResolvingBattle) return
     const attacker = regions[battleContext.attackerId]
@@ -477,6 +530,14 @@ export default function GOTMap() {
           <button type="button" className="panel-btn panel-btn-featured" onClick={runFeaturedBattle} disabled={isBattleModalOpen || isResolvingBattle}>
             Demo: North attacks Riverlands
           </button>
+          <button
+            type="button"
+            className="panel-btn panel-btn-endturn"
+            onClick={handleEndTurn}
+            disabled={isBattleModalOpen || isResolvingBattle}
+          >
+            End {HOUSE_META[currentFaction].label}'s Turn
+          </button>
         </div>
 
         {selectedData ? (
@@ -502,7 +563,10 @@ export default function GOTMap() {
                 Recruit (+8 to +16)
               </button>
               <button type="button" className="panel-btn" onClick={handleFortify} disabled={!canFortify}>
-                Fortify (Shield Pulse)
+                Fortify (Shield)
+              </button>
+              <button type="button" className="panel-btn" onClick={handleGatherResources} disabled={!canGatherResources}>
+                Harvest (+40/+60/+20)
               </button>
               <button
                 type="button"

@@ -620,6 +620,13 @@
   background: linear-gradient(180deg, rgba(92, 28, 15, 0.9), rgba(46, 14, 8, 0.95));
 }
 
+.panel-btn-endturn {
+  border-color: rgba(156, 82, 58, 0.9);
+  background: linear-gradient(180deg, rgba(106, 46, 35, 0.98), rgba(56, 28, 25, 0.98));
+  font-weight: 800;
+  min-width: 100%;
+}
+
 .attack-hint {
   margin-top: 6px;
   color: #f4c78a;
