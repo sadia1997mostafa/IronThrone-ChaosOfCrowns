@@ -24,6 +24,25 @@
   box-shadow: 0 30px 65px rgba(0, 0, 0, 0.45);
 }
 
+.turn-banner {
+  position: absolute;
+  left: 50%;
+  top: 20px;
+  z-index: 8;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(233, 187, 122, 0.7);
+  background: linear-gradient(180deg, rgba(60, 31, 18, 0.92), rgba(24, 12, 7, 0.96));
+  color: #f5dcae;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+  font-weight: 700;
+  animation: turnBannerReveal 1.3s ease forwards;
+  pointer-events: none;
+}
+
 .map-container.is-cinematic .map-image {
   filter: saturate(0.78) contrast(1.08) brightness(0.78);
 }
@@ -49,11 +68,11 @@
 }
 
 .region {
-  fill: rgba(255, 255, 255, 0.01);
+  fill: color-mix(in srgb, var(--region-owner, #92724f) 16%, transparent 84%);
   stroke: transparent;
   stroke-width: 0;
   cursor: pointer;
-  transition: fill 0.2s ease;
+  transition: fill 0.2s ease, stroke 0.2s ease, filter 0.2s ease;
 }
 
 .region:hover {
@@ -646,6 +665,12 @@
   font-size: 0.84rem;
 }
 
+.diplomacy-block {
+  margin-top: 8px;
+  border-top: 1px solid rgba(164, 112, 66, 0.35);
+  padding-top: 8px;
+}
+
 .event-log {
   margin-top: 16px;
   border-top: 1px solid rgba(164, 112, 66, 0.4);
@@ -1020,6 +1045,25 @@
   }
   100% {
     transform: translateX(-50%) scale(1);
+  }
+}
+
+@keyframes turnBannerReveal {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  18% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
   }
 }
 

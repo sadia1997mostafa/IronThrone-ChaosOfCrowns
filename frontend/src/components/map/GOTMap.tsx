@@ -12,6 +12,8 @@ import UnitToken from './UnitToken'
 import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
 import { resolveBattle as calculateBattleResolution } from '@/lib/helpers/battleResolution'
+import { pickAIDecision } from '@/lib/helpers/aiDecision'
+import { createInitialDiplomacy, PLAYABLE_HOUSES, type DiplomacyMatrix, type RelationState } from '@/lib/helpers/diplomacy'
 
 const VIEW_BOX = '0 0 1536 1024'
 const regionOrder: RegionId[] = [
@@ -27,7 +29,9 @@ const regionOrder: RegionId[] = [
   'braavos',
 ]
 
-const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string; unitImage: string; unitModel: string }> = {
+type PlayableHouseId = Exclude<HouseId, 'neutral'>
+
+const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string; unitImage?: string; unitModel?: string }> = {
   stark: {
     label: 'House Stark',
     color: '#7dc4ff',
@@ -54,6 +58,12 @@ const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string;
     color: '#a5de8b',
     glyph: '🌿',
     unitImage: '/images/houses/tyrell/unit.png',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+  neutral: {
+    label: 'Neutral Houses',
+    color: '#c6ab85',
+    glyph: '⚜',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
 }
@@ -83,11 +93,6 @@ const SKIRMISH_WEAPONS = {
   dagger: '/models/game_of_thrones_wildlings_dagger.glb',
 } as const
 
-const FEATURED_BATTLE = {
-  attacker: 'north' as RegionId,
-  defender: 'riverlands' as RegionId,
-}
-
 export default function GOTMap() {
   const [regions, setRegions] = useState(() => ({ ...regionData }))
   const [selectedRegion, setSelectedRegion] = useState<RegionId | null>(null)
@@ -108,13 +113,24 @@ export default function GOTMap() {
     'Tip: Select an attacker, then click a neighboring enemy region to trigger a cinematic clash.',
   ])
   const [turn, setTurn] = useState(1)
-  const [currentFaction, setCurrentFaction] = useState<HouseId>('stark')
+  const [currentFaction, setCurrentFaction] = useState<PlayableHouseId>('stark')
   const [simulationPhase, setSimulationPhase] = useState<'idle' | 'battle' | 'ending'>('idle')
-  const [gold, setGold] = useState(850)
-  const [food, setFood] = useState(720)
-  const [influence, setInfluence] = useState(480)
+  const [resourcesByHouse, setResourcesByHouse] = useState<
+    Record<PlayableHouseId, { gold: number; food: number; influence: number }>
+  >({
+    stark: { gold: 400, food: 480, influence: 220 },
+    lannister: { gold: 520, food: 390, influence: 260 },
+    tyrell: { gold: 460, food: 520, influence: 240 },
+    targaryen: { gold: 500, food: 420, influence: 280 },
+  })
+  const [diplomacy, setDiplomacy] = useState<DiplomacyMatrix>(() => createInitialDiplomacy())
+  const [turnBanner, setTurnBanner] = useState<string>('Turn 1 • House Stark')
+  const [hasActedThisTurn, setHasActedThisTurn] = useState(false)
+  const [aiReason, setAiReason] = useState<string | null>(null)
   const floatingIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
+
+  const activeResources = resourcesByHouse[currentFaction]
 
   const availableRegions = useMemo(
     () => regionOrder.filter((regionId) => mapPaths[regionId].trim().length > 0),
@@ -123,10 +139,10 @@ export default function GOTMap() {
 
   const selectedData = selectedRegion ? regions[selectedRegion] : null
   const isSelectedOwnedByCurrentFaction = selectedData && selectedData.houseId === currentFaction
-  const canRecruit = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
-  const canFortify = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
-  const canPrimeAttacker = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
-  const canGatherResources = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle
+  const canRecruit = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle && !hasActedThisTurn
+  const canFortify = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle && !hasActedThisTurn
+  const canPrimeAttacker = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle && !hasActedThisTurn
+  const canGatherResources = isSelectedOwnedByCurrentFaction && !isBattleModalOpen && !isResolvingBattle && !hasActedThisTurn
 
   const activePathPoints = battlePath
     ? {
@@ -143,13 +159,13 @@ export default function GOTMap() {
     (battlePhase === 'march' || battlePhase === 'impact' || battlePhase === 'briefing')
 
   const canAttackTarget = (sourceId: RegionId, targetId: RegionId) => {
-    if (sourceId !== FEATURED_BATTLE.attacker || targetId !== FEATURED_BATTLE.defender) {
-      return false
-    }
-
     const source = regions[sourceId]
     const target = regions[targetId]
-    return source.neighbors.includes(targetId) && source.houseId !== target.houseId
+    if (!source.neighbors.includes(targetId)) return false
+    if (source.houseId === target.houseId) return false
+    if (target.houseId === 'neutral') return true
+    if (source.houseId === 'neutral') return false
+    return diplomacy[source.houseId][target.houseId] === 'hostile'
   }
 
   const highlightedNeighbors = useMemo<RegionId[]>(() => {
@@ -159,6 +175,33 @@ export default function GOTMap() {
 
   const addEvent = (entry: string) => {
     setEventLog((prev) => [entry, ...prev].slice(0, 9))
+  }
+
+  const updateCurrentResources = (delta: Partial<{ gold: number; food: number; influence: number }>) => {
+    setResourcesByHouse((prev) => ({
+      ...prev,
+      [currentFaction]: {
+        gold: prev[currentFaction].gold + (delta.gold || 0),
+        food: prev[currentFaction].food + (delta.food || 0),
+        influence: prev[currentFaction].influence + (delta.influence || 0),
+      },
+    }))
+  }
+
+  const cycleRelation = (house: PlayableHouseId) => {
+    if (house === currentFaction) return
+    setDiplomacy((prev) => {
+      const current = prev[currentFaction][house]
+      const next: RelationState = current === 'hostile' ? 'neutral' : current === 'neutral' ? 'allied' : 'hostile'
+      addEvent(`${HOUSE_META[currentFaction].label} relation with ${HOUSE_META[house].label} changed to ${next}.`)
+      return {
+        ...prev,
+        [currentFaction]: {
+          ...prev[currentFaction],
+          [house]: next,
+        },
+      }
+    })
   }
 
   const addFloatingText = (
@@ -284,6 +327,7 @@ export default function GOTMap() {
     setBattlePhase('targeting')
     setBattlePath(null)
     setSimulationPhase('battle')
+    setHasActedThisTurn(true)
     addEvent(`${attacker.house} attacked ${defender.name}.`)
 
     await wait(480)
@@ -310,51 +354,70 @@ export default function GOTMap() {
     }
   }
 
-  const handleRecruit = () => {
-    if (!selectedRegion) return
-    const bonus = 8 + Math.floor(Math.random() * 9)
+  const handleRecruit = (regionId = selectedRegion) => {
+    if (!regionId) return
+    if (resourcesByHouse[currentFaction].gold < 60) {
+      addEvent(`${HOUSE_META[currentFaction].label} lacks gold to recruit.`)
+      return
+    }
+    const bonus = 12
     setRegions((prev) => {
       const updated = {
         ...prev,
-        [selectedRegion]: {
-          ...prev[selectedRegion],
-          army: prev[selectedRegion].army + bonus,
+        [regionId]: {
+          ...prev[regionId],
+          army: prev[regionId].army + bonus,
         },
       }
       return updated
     })
-    const pos = regions[selectedRegion].tokenPosition
+    updateCurrentResources({ gold: -60 })
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+    const pos = regions[regionId].tokenPosition
     addFloatingText(pos.x, pos.y, `+${bonus} Army`, 'positive')
-    addEvent(`${regions[selectedRegion].house} recruited troops in ${regions[selectedRegion].name}: +${bonus} Army.`)
+    addEvent(`${regions[regionId].house} recruited troops in ${regions[regionId].name}: +${bonus} Army.`)
   }
 
-  const handleFortify = () => {
-    if (!selectedRegion) return
-    setFortifiedRegion(selectedRegion)
-    const pos = regions[selectedRegion].tokenPosition
-    addFloatingText(pos.x, pos.y, 'Shield Wall', 'neutral')
-    addEvent(`${regions[selectedRegion].house} fortified ${regions[selectedRegion].name}.`)
-    setTimeout(() => setFortifiedRegion((prev) => (prev === selectedRegion ? null : prev)), 1300)
+  const handleFortify = (regionId = selectedRegion) => {
+    if (!regionId) return
+    setFortifiedRegion(regionId)
+    setRegions((prev) => ({
+      ...prev,
+      [regionId]: {
+        ...prev[regionId],
+        defense: prev[regionId].defense + 4,
+      },
+    }))
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+    const pos = regions[regionId].tokenPosition
+    addFloatingText(pos.x, pos.y, '+4 Defense', 'neutral')
+    addFloatingText(pos.x + 18, pos.y - 16, 'Shield Wall', 'neutral')
+    addEvent(`${regions[regionId].house} fortified ${regions[regionId].name}.`)
+    setTimeout(() => setFortifiedRegion((prev) => (prev === regionId ? null : prev)), 1300)
   }
 
-  const handleGatherResources = () => {
-    if (!selectedRegion) return
+  const handleGatherResources = (regionId = selectedRegion) => {
+    if (!regionId) return
     const goldBonus = 40 + Math.floor(Math.random() * 80)
     const foodBonus = 60 + Math.floor(Math.random() * 100)
     const influenceBonus = 20 + Math.floor(Math.random() * 45)
-    
-    setGold((prev) => prev + goldBonus)
-    setFood((prev) => prev + foodBonus)
-    setInfluence((prev) => prev + influenceBonus)
-    
-    const pos = regions[selectedRegion].tokenPosition
+
+    updateCurrentResources({ gold: goldBonus, food: foodBonus, influence: influenceBonus })
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+
+    const pos = regions[regionId].tokenPosition
+    addFloatingText(pos.x, pos.y - 10, `+${goldBonus} Gold`, 'positive')
     addFloatingText(pos.x, pos.y, `+${foodBonus} Food`, 'positive')
+    addFloatingText(pos.x + 20, pos.y - 18, `+${influenceBonus} Influence`, 'positive')
     addEvent(
-      `${regions[selectedRegion].house} gathered resources in ${regions[selectedRegion].name}: +${goldBonus} Gold, +${foodBonus} Food, +${influenceBonus} Influence.`
+      `${regions[regionId].house} gathered resources in ${regions[regionId].name}: +${goldBonus} Gold, +${foodBonus} Food, +${influenceBonus} Influence.`
     )
   }
 
-  const getHouseOrder = (): HouseId[] => ['stark', 'lannister', 'tyrell', 'targaryen']
+  const getHouseOrder = (): PlayableHouseId[] => PLAYABLE_HOUSES
 
   const handleEndTurn = async () => {
     if (isBattleModalOpen || isResolvingBattle) return
@@ -363,29 +426,76 @@ export default function GOTMap() {
     const currentIndex = turnOrder.indexOf(currentFaction)
     const nextFaction = turnOrder[(currentIndex + 1) % turnOrder.length]
 
-    // Auto-generate some events for the turn change
     if (nextFaction === 'stark') {
       setTurn((prev) => prev + 1)
-      addEvent('═══════════════════════════════════')
+      addEvent('New round begins across the realm.')
     }
 
     setCurrentFaction(nextFaction)
     setSimulationPhase('idle')
     setSelectedRegion(null)
     setAttackSource(null)
+    setHasActedThisTurn(false)
+    setAiReason(null)
     clearBattleVisuals()
+    setTurnBanner(`${HOUSE_META[nextFaction].label} takes the field`)
+    setTimeout(() => setTurnBanner(''), 1400)
 
-    // Grant resources to the new faction regions
     const factionRegions = availableRegions.filter((rid) => regions[rid].houseId === nextFaction)
     if (factionRegions.length > 0) {
       const resourcePerRegion = 30
-      setGold((prev) => prev + resourcePerRegion * factionRegions.length)
-      setFood((prev) => prev + 45 * factionRegions.length)
-      setInfluence((prev) => prev + 15 * factionRegions.length)
+      setResourcesByHouse((prev) => ({
+        ...prev,
+        [nextFaction]: {
+          gold: prev[nextFaction].gold + resourcePerRegion * factionRegions.length,
+          food: prev[nextFaction].food + 45 * factionRegions.length,
+          influence: prev[nextFaction].influence + 15 * factionRegions.length,
+        },
+      }))
       addEvent(`${HOUSE_META[nextFaction].label} gains income from ${factionRegions.length} controlled regions.`)
     }
 
     await wait(600)
+  }
+
+  const handleAITakeAction = async () => {
+    if (isBattleModalOpen || isResolvingBattle || hasActedThisTurn) return
+
+    const decision = pickAIDecision({
+      house: currentFaction,
+      regions,
+      availableRegionIds: availableRegions,
+      diplomacy,
+      gold: resourcesByHouse[currentFaction].gold,
+    })
+
+    if (!decision) {
+      addEvent(`${HOUSE_META[currentFaction].label} has no legal AI action.`)
+      setHasActedThisTurn(true)
+      return
+    }
+
+    setAiReason(decision.reason)
+    addEvent(`AI: ${decision.reason}`)
+    setSelectedRegion('regionId' in decision ? decision.regionId : decision.sourceId)
+
+    if (decision.action === 'gather') {
+      handleGatherResources(decision.regionId)
+      return
+    }
+
+    if (decision.action === 'recruit') {
+      handleRecruit(decision.regionId)
+      return
+    }
+
+    if (decision.action === 'fortify') {
+      handleFortify(decision.regionId)
+      return
+    }
+
+    setAttackSource(decision.sourceId)
+    await launchAttackSequence(decision.sourceId, decision.targetId)
   }
 
   const resolveBattle = async () => {
@@ -450,9 +560,13 @@ export default function GOTMap() {
   }
 
   const runFeaturedBattle = () => {
-    setAttackSource(FEATURED_BATTLE.attacker)
-    setSelectedRegion(FEATURED_BATTLE.attacker)
-    void launchAttackSequence(FEATURED_BATTLE.attacker, FEATURED_BATTLE.defender)
+    if (currentFaction !== 'stark') {
+      addEvent('Featured demo battle is available during House Stark turn.')
+      return
+    }
+    setAttackSource('north')
+    setSelectedRegion('north')
+    void launchAttackSequence('north', 'riverlands')
   }
 
   return (
@@ -461,9 +575,9 @@ export default function GOTMap() {
         turn={turn}
         currentFaction={currentFaction}
         phase={simulationPhase}
-        gold={gold}
-        food={food}
-        influence={influence}
+        gold={activeResources.gold}
+        food={activeResources.food}
+        influence={activeResources.influence}
         factionColors={{
           stark: HOUSE_META.stark.color,
           lannister: HOUSE_META.lannister.color,
@@ -475,6 +589,7 @@ export default function GOTMap() {
       <div
         className={`map-container ${isCinematicActive ? 'is-cinematic' : ''} ${battlePhase === 'impact' ? 'is-impact' : ''}`}
       >
+        {turnBanner ? <div className="turn-banner">{turnBanner}</div> : null}
         {isCinematicActive && <div className="map-cinematic-dim" aria-hidden />}
 
         <img
@@ -490,6 +605,7 @@ export default function GOTMap() {
               key={regionId}
               d={mapPaths[regionId]}
               className={`region ${selectedRegion === regionId ? 'active' : ''} ${highlightedNeighbors.includes(regionId) ? 'neighbor' : ''}`}
+              style={{ ['--region-owner' as string]: HOUSE_META[regions[regionId].houseId].color }}
               onClick={() => handleRegionPick(regionId)}
             />
           ))}
@@ -500,7 +616,7 @@ export default function GOTMap() {
             visible={skirmishVisible}
             attackerColor={activeAttackerHouse.color}
             defenderColor={activeDefenderHouse.color}
-            modelSrc={activeAttackerHouse.unitModel}
+            modelSrc={activeAttackerHouse.unitModel || '/models/epic_black_golden_cyber_warrior.glb'}
             weaponSources={SKIRMISH_WEAPONS}
             phase={battlePhase === 'impact' ? 'impact' : battlePhase === 'march' ? 'march' : 'briefing'}
             slowMo={impactSlowMo}
@@ -551,8 +667,16 @@ export default function GOTMap() {
 
       <aside className="region-panel" aria-live="polite">
         <div className="panel-actions">
-          <button type="button" className="panel-btn panel-btn-featured" onClick={runFeaturedBattle} disabled={isBattleModalOpen || isResolvingBattle}>
+          <button type="button" className="panel-btn panel-btn-featured" onClick={runFeaturedBattle} disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn}>
             Demo: North attacks Riverlands
+          </button>
+          <button
+            type="button"
+            className="panel-btn"
+            onClick={() => void handleAITakeAction()}
+            disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn}
+          >
+            AI Take Action
           </button>
           <button
             type="button"
@@ -586,22 +710,22 @@ export default function GOTMap() {
             </p>
 
             <div className="panel-actions">
-              <button type="button" className="panel-btn" onClick={handleRecruit} disabled={!canRecruit}>
-                Recruit (+8 to +16)
+              <button type="button" className="panel-btn" onClick={() => handleRecruit()} disabled={!canRecruit}>
+                Recruit (+12 Army)
               </button>
-              <button type="button" className="panel-btn" onClick={handleFortify} disabled={!canFortify}>
-                Fortify (Shield)
+              <button type="button" className="panel-btn" onClick={() => handleFortify()} disabled={!canFortify}>
+                Fortify (+4 Defense)
               </button>
-              <button type="button" className="panel-btn" onClick={handleGatherResources} disabled={!canGatherResources}>
-                Harvest (+40/+60/+20)
+              <button type="button" className="panel-btn" onClick={() => handleGatherResources()} disabled={!canGatherResources}>
+                Gather Resources
               </button>
               <button
                 type="button"
                 className="panel-btn panel-btn-attack"
-                onClick={() => setAttackSource(FEATURED_BATTLE.attacker)}
-                disabled={!canPrimeAttacker || selectedRegion !== FEATURED_BATTLE.attacker}
+                onClick={() => setAttackSource(selectedRegion)}
+                disabled={!canPrimeAttacker || !selectedRegion}
               >
-                {attackSource === FEATURED_BATTLE.attacker ? 'Stark Attacker Ready' : 'Set Stark as Attacker'}
+                {attackSource === selectedRegion ? 'Attacker Ready' : 'Set as Attacker'}
               </button>
               {attackSource ? (
                 <button type="button" className="panel-btn" onClick={() => setAttackSource(null)} disabled={isBattleModalOpen || isResolvingBattle}>
@@ -612,9 +736,37 @@ export default function GOTMap() {
 
             {attackSource ? (
               <p className="attack-hint">
-                Attack mode: click Riverlands to launch the featured North to Riverlands clash.
+                Attack mode: click a hostile or neutral neighboring region to launch the clash.
               </p>
             ) : null}
+
+            <p>
+              <strong>Turn Action:</strong> {hasActedThisTurn ? 'Used' : 'Available'}
+            </p>
+            {aiReason ? (
+              <p>
+                <strong>AI Intent:</strong> {aiReason}
+              </p>
+            ) : null}
+
+            <div className="diplomacy-block">
+              <p>
+                <strong>Diplomacy:</strong> click to cycle relation
+              </p>
+              <div className="panel-actions">
+                {PLAYABLE_HOUSES.filter((house) => house !== currentFaction).map((house) => (
+                  <button
+                    key={`relation-${house}`}
+                    type="button"
+                    className="panel-btn"
+                    onClick={() => cycleRelation(house)}
+                    disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn}
+                  >
+                    {HOUSE_META[house].label}: {diplomacy[currentFaction][house]}
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         ) : (
           <>
@@ -653,6 +805,7 @@ export default function GOTMap() {
             imageSrc: HOUSE_META[regions[battleContext.defenderId].houseId].unitImage,
             glyph: HOUSE_META[regions[battleContext.defenderId].houseId].glyph,
           }}
+          defenderDefense={regions[battleContext.defenderId].defense}
           winChance={battleContext.winChance}
           resolving={isResolvingBattle}
           resultText={battleResult}

@@ -1,6 +1,6 @@
 import type { RegionId } from '@/assets/mapPaths'
 
-export type HouseId = 'stark' | 'lannister' | 'targaryen' | 'tyrell'
+export type HouseId = 'stark' | 'lannister' | 'targaryen' | 'tyrell' | 'neutral'
 
 export type RegionInfo = {
   name: string
@@ -31,8 +31,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   vale: {
     name: 'The Vale',
-    houseId: 'stark',
-    house: 'House Stark',
+    houseId: 'neutral',
+    house: 'Neutral Houses',
     army: 62,
     defense: 21,
     resources: ['Mountain passes', 'Silver', 'Fortified castles'],
@@ -42,8 +42,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   riverlands: {
     name: 'Riverlands',
-    houseId: 'tyrell',
-    house: 'House Tyrell',
+    houseId: 'neutral',
+    house: 'Neutral Houses',
     army: 68,
     defense: 15,
     resources: ['River trade', 'Farmland', 'Crossing routes'],
@@ -75,8 +75,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   stormlands: {
     name: 'Stormlands',
-    houseId: 'targaryen',
-    house: 'House Targaryen',
+    houseId: 'neutral',
+    house: 'Neutral Houses',
     army: 66,
     defense: 19,
     resources: ['Ship timber', 'Coastal forts', 'War ports'],
@@ -86,8 +86,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   dorne: {
     name: 'Dorne',
-    houseId: 'targaryen',
-    house: 'House Targaryen',
+    houseId: 'neutral',
+    house: 'Neutral Houses',
     army: 58,
     defense: 17,
     resources: ['Sunspear trade', 'Spices', 'Desert tactics'],
@@ -97,8 +97,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   iron_islands: {
     name: 'Iron Islands',
-    houseId: 'lannister',
-    house: 'House Lannister',
+    houseId: 'neutral',
+    house: 'Neutral Houses',
     army: 54,
     defense: 13,
     resources: ['Raider fleets', 'Ironworks', 'Naval leverage'],

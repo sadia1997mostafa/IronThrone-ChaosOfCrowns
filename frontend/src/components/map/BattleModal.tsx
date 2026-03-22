@@ -15,6 +15,7 @@ type BattleModalProps = {
   location: string
   attacker: BattleSide
   defender: BattleSide
+  defenderDefense: number
   winChance: number
   resolving: boolean
   resultText: string | null
@@ -27,6 +28,7 @@ export default function BattleModal({
   location,
   attacker,
   defender,
+  defenderDefense,
   winChance,
   resolving,
   resultText,
@@ -47,6 +49,7 @@ export default function BattleModal({
         <div className="battle-metrics">
           <span>Attack Strength {attacker.army}</span>
           <span>Defense Strength {defender.army}</span>
+          <span>Defense Rating {defenderDefense}</span>
           <span>Victory Probability {Math.round(winChance * 100)}%</span>
         </div>
 

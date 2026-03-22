@@ -2,14 +2,16 @@
 
 import type { HouseId } from '@/data/regionData'
 
+type PlayableHouseId = Exclude<HouseId, 'neutral'>
+
 type SimulationBarProps = {
   turn: number
-  currentFaction: HouseId | null
+  currentFaction: PlayableHouseId | null
   phase: 'idle' | 'battle' | 'ending'
   gold: number
   food: number
   influence: number
-  factionColors: Record<HouseId, string>
+  factionColors: Record<PlayableHouseId, string>
 }
 
 export default function SimulationBar({
