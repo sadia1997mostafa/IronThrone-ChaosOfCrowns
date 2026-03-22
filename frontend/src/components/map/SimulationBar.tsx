@@ -38,7 +38,7 @@ export default function SimulationBar({
       </div>
 
       <div className="sim-section sim-faction" style={{ ['--faction-color' as string]: factionColor }}>
-        <span className="sim-label">FACTION</span>
+        <span className="sim-label">ACTIVE HOUSE</span>
         <span className="sim-value">{factionLabel}</span>
       </div>
 

@@ -6,10 +6,12 @@ import BattleModal from './BattleModal'
 import BattlePath from './BattlePath'
 import BattleSkirmish3D from './BattleSkirmish3D'
 import ClashEffect from './ClashEffect'
+import EventLog from './EventLog'
 import FloatingStatText from './FloatingStatText'
 import UnitToken from './UnitToken'
 import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
+import { resolveBattle as calculateBattleResolution } from '@/lib/helpers/battleResolution'
 
 const VIEW_BOX = '0 0 1536 1024'
 const regionOrder: RegionId[] = [
@@ -68,6 +70,7 @@ type BattleContext = {
   attackerId: RegionId
   defenderId: RegionId
   winChance: number
+  randomBonus: number
 }
 
 type BattlePhase = 'idle' | 'targeting' | 'march' | 'impact' | 'briefing'
@@ -79,6 +82,11 @@ const SKIRMISH_WEAPONS = {
   defenderSword: '/models/sword2.glb',
   dagger: '/models/game_of_thrones_wildlings_dagger.glb',
 } as const
+
+const FEATURED_BATTLE = {
+  attacker: 'north' as RegionId,
+  defender: 'riverlands' as RegionId,
+}
 
 export default function GOTMap() {
   const [regions, setRegions] = useState(() => ({ ...regionData }))
@@ -135,10 +143,19 @@ export default function GOTMap() {
     (battlePhase === 'march' || battlePhase === 'impact' || battlePhase === 'briefing')
 
   const canAttackTarget = (sourceId: RegionId, targetId: RegionId) => {
+    if (sourceId !== FEATURED_BATTLE.attacker || targetId !== FEATURED_BATTLE.defender) {
+      return false
+    }
+
     const source = regions[sourceId]
     const target = regions[targetId]
     return source.neighbors.includes(targetId) && source.houseId !== target.houseId
   }
+
+  const highlightedNeighbors = useMemo<RegionId[]>(() => {
+    if (!selectedRegion) return []
+    return regions[selectedRegion].neighbors
+  }, [regions, selectedRegion])
 
   const addEvent = (entry: string) => {
     setEventLog((prev) => [entry, ...prev].slice(0, 9))
@@ -248,17 +265,26 @@ export default function GOTMap() {
 
     const attacker = regions[sourceId]
     const defender = regions[targetId]
-    const powerDelta = attacker.army - defender.army
-    const winChance = Math.max(0.2, Math.min(0.86, 0.55 + powerDelta / 180))
+    const preBattle = calculateBattleResolution({
+      attackerArmy: attacker.army,
+      defenderArmy: defender.army,
+      defenderDefense: defender.defense,
+    })
 
     setAttackSource(sourceId)
     setSelectedRegion(targetId)
     setBattleResult(null)
-    setBattleContext({ attackerId: sourceId, defenderId: targetId, winChance })
+    setBattleContext({
+      attackerId: sourceId,
+      defenderId: targetId,
+      winChance: preBattle.winChance,
+      randomBonus: preBattle.randomBonus,
+    })
     setIsCinematicActive(true)
     setBattlePhase('targeting')
     setBattlePath(null)
-    addEvent(`Assault order issued: ${attacker.name} advancing on ${defender.name}.`)
+    setSimulationPhase('battle')
+    addEvent(`${attacker.house} attacked ${defender.name}.`)
 
     await wait(480)
     setBattlePhase('march')
@@ -299,7 +325,7 @@ export default function GOTMap() {
     })
     const pos = regions[selectedRegion].tokenPosition
     addFloatingText(pos.x, pos.y, `+${bonus} Army`, 'positive')
-    addEvent(`Reinforcements deployed to ${regions[selectedRegion].name}: +${bonus} Army.`)
+    addEvent(`${regions[selectedRegion].house} recruited troops in ${regions[selectedRegion].name}: +${bonus} Army.`)
   }
 
   const handleFortify = () => {
@@ -307,7 +333,7 @@ export default function GOTMap() {
     setFortifiedRegion(selectedRegion)
     const pos = regions[selectedRegion].tokenPosition
     addFloatingText(pos.x, pos.y, 'Shield Wall', 'neutral')
-    addEvent(`${regions[selectedRegion].name} fortifies defensive lines.`)
+    addEvent(`${regions[selectedRegion].house} fortified ${regions[selectedRegion].name}.`)
     setTimeout(() => setFortifiedRegion((prev) => (prev === selectedRegion ? null : prev)), 1300)
   }
 
@@ -324,7 +350,7 @@ export default function GOTMap() {
     const pos = regions[selectedRegion].tokenPosition
     addFloatingText(pos.x, pos.y, `+${foodBonus} Food`, 'positive')
     addEvent(
-      `${regions[selectedRegion].name} harvests resources: +${goldBonus} Gold, +${foodBonus} Food, +${influenceBonus} Influence.`
+      `${regions[selectedRegion].house} gathered resources in ${regions[selectedRegion].name}: +${goldBonus} Gold, +${foodBonus} Food, +${influenceBonus} Influence.`
     )
   }
 
@@ -369,22 +395,22 @@ export default function GOTMap() {
 
     setIsResolvingBattle(true)
     await wait(500)
-    const attackerWins = Math.random() < battleContext.winChance
+    const outcome = calculateBattleResolution({
+      attackerArmy: attacker.army,
+      defenderArmy: defender.army,
+      defenderDefense: defender.defense,
+    })
 
-    if (attackerWins) {
-      const attackerLoss = Math.max(6, Math.min(Math.round(defender.army * 0.36), Math.floor(attacker.army * 0.6)))
-      const attackerAfter = Math.max(10, attacker.army - attackerLoss)
-      const defenderAfter = Math.max(12, Math.round(attackerAfter * 0.55))
-
+    if (outcome.attackerWins) {
       setRegions((prev) => ({
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: attackerAfter,
+          army: outcome.attackerAfter,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: defenderAfter,
+          army: outcome.defenderAfter,
           houseId: prev[battleContext.attackerId].houseId,
           house: prev[battleContext.attackerId].house,
         },
@@ -392,43 +418,41 @@ export default function GOTMap() {
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `-${attackerLoss} Army`, 'negative')
+      addFloatingText(sourcePos.x, sourcePos.y, `-${outcome.attackerLoss} Army`, 'negative')
       addFloatingText(targetPos.x, targetPos.y, 'Captured', 'positive')
-      addEvent(`${attacker.house} secures ${defender.name}; ${defender.house} forced to retreat.`)
+      addEvent(`${defender.name} was captured by ${attacker.house}.`)
       setBattleResult(`${attacker.house} captures ${defender.name}`)
       playWarCue('result')
     } else {
-      const attackerLoss = Math.max(8, Math.min(Math.round(defender.army * 0.45), Math.floor(attacker.army * 0.7)))
-      const defenderLoss = Math.max(4, Math.min(Math.round(attacker.army * 0.24), Math.floor(defender.army * 0.45)))
-      const attackerAfter = Math.max(8, attacker.army - attackerLoss)
-      const defenderAfter = Math.max(8, defender.army - defenderLoss)
-
       setRegions((prev) => ({
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: attackerAfter,
+          army: outcome.attackerAfter,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: defenderAfter,
+          army: outcome.defenderAfter,
         },
       }))
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `-${attackerLoss} Army`, 'negative')
-      addFloatingText(targetPos.x, targetPos.y, `-${defenderLoss} Army`, 'negative')
+      addFloatingText(sourcePos.x, sourcePos.y, `-${outcome.attackerLoss} Army`, 'negative')
+      addFloatingText(targetPos.x, targetPos.y, `-${outcome.defenderLoss} Army`, 'negative')
       addEvent(`${defender.house} holds ${defender.name} under heavy assault from ${attacker.house}.`)
       setBattleResult(`${defender.house} holds ${defender.name}`)
       playWarCue('result')
     }
 
+    setSimulationPhase('ending')
     setIsResolvingBattle(false)
   }
 
   const runFeaturedBattle = () => {
-    void launchAttackSequence('north', 'riverlands')
+    setAttackSource(FEATURED_BATTLE.attacker)
+    setSelectedRegion(FEATURED_BATTLE.attacker)
+    void launchAttackSequence(FEATURED_BATTLE.attacker, FEATURED_BATTLE.defender)
   }
 
   return (
@@ -465,7 +489,7 @@ export default function GOTMap() {
             <path
               key={regionId}
               d={mapPaths[regionId]}
-              className={`region ${selectedRegion === regionId ? 'active' : ''}`}
+              className={`region ${selectedRegion === regionId ? 'active' : ''} ${highlightedNeighbors.includes(regionId) ? 'neighbor' : ''}`}
               onClick={() => handleRegionPick(regionId)}
             />
           ))}
@@ -550,6 +574,9 @@ export default function GOTMap() {
               <strong>Army:</strong> {selectedData.army}
             </p>
             <p>
+              <strong>Defense:</strong> {selectedData.defense}
+            </p>
+            <p>
               <strong>Resources:</strong> {selectedData.resources.join(', ')}
             </p>
             <p>{selectedData.description}</p>
@@ -571,10 +598,10 @@ export default function GOTMap() {
               <button
                 type="button"
                 className="panel-btn panel-btn-attack"
-                onClick={() => setAttackSource(selectedRegion)}
-                disabled={!canPrimeAttacker || !selectedRegion}
+                onClick={() => setAttackSource(FEATURED_BATTLE.attacker)}
+                disabled={!canPrimeAttacker || selectedRegion !== FEATURED_BATTLE.attacker}
               >
-                {attackSource === selectedRegion ? 'Attacker Ready' : 'Set as Attacker'}
+                {attackSource === FEATURED_BATTLE.attacker ? 'Stark Attacker Ready' : 'Set Stark as Attacker'}
               </button>
               {attackSource ? (
                 <button type="button" className="panel-btn" onClick={() => setAttackSource(null)} disabled={isBattleModalOpen || isResolvingBattle}>
@@ -585,7 +612,7 @@ export default function GOTMap() {
 
             {attackSource ? (
               <p className="attack-hint">
-                Attack mode: click a hostile neighboring region to launch a cinematic clash.
+                Attack mode: click Riverlands to launch the featured North to Riverlands clash.
               </p>
             ) : null}
           </>
@@ -601,12 +628,7 @@ export default function GOTMap() {
           </>
         )}
 
-        <div className="event-log">
-          <h3>War Chronicle</h3>
-          {eventLog.map((entry, index) => (
-            <p key={`${entry}-${index}`}>{entry}</p>
-          ))}
-        </div>
+        <EventLog entries={eventLog} />
       </aside>
 
       {battleContext ? (
