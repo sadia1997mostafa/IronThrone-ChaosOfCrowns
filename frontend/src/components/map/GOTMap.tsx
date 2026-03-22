@@ -13,7 +13,7 @@ import UnitToken from './UnitToken'
 import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
 import { resolveBattle as calculateBattleResolution } from '@/lib/helpers/battleResolution'
-import { pickAIDecision, type AIFuzzySnapshot } from '@/lib/helpers/aiDecision'
+import { pickAIDecision, type AIFuzzySnapshot, type AIDecisionTreeSnapshot } from '@/lib/helpers/aiDecision'
 import { createInitialDiplomacy, PLAYABLE_HOUSES, type DiplomacyMatrix, type RelationState } from '@/lib/helpers/diplomacy'
 
 const VIEW_BOX = '0 0 1536 1024'
@@ -129,6 +129,7 @@ export default function GOTMap() {
   const [hasActedThisTurn, setHasActedThisTurn] = useState(false)
   const [aiReason, setAiReason] = useState<string | null>(null)
   const [aiFuzzy, setAiFuzzy] = useState<AIFuzzySnapshot | null>(null)
+  const [aiTree, setAiTree] = useState<AIDecisionTreeSnapshot | null>(null)
   const floatingIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
 
@@ -440,6 +441,7 @@ export default function GOTMap() {
     setHasActedThisTurn(false)
     setAiReason(null)
     setAiFuzzy(null)
+    setAiTree(null)
     clearBattleVisuals()
     setTurnBanner(`${HOUSE_META[nextFaction].label} takes the field`)
     setTimeout(() => setTurnBanner(''), 1400)
@@ -480,6 +482,7 @@ export default function GOTMap() {
 
     setAiReason(decision.reason)
     setAiFuzzy(decision.fuzzy)
+    setAiTree(decision.tree)
     addEvent(`AI: ${decision.reason}`)
     setSelectedRegion('regionId' in decision ? decision.regionId : decision.sourceId)
 
@@ -692,6 +695,14 @@ export default function GOTMap() {
           </button>
         </div>
 
+        <AIDecisionPanel
+          activeHouseLabel={HOUSE_META[currentFaction].label}
+          turn={turn}
+          fuzzy={aiFuzzy}
+          tree={aiTree}
+          finalReason={aiReason}
+        />
+
         {selectedData ? (
           <>
             <h2>{selectedData.name}</h2>
@@ -785,13 +796,6 @@ export default function GOTMap() {
         )}
 
         <EventLog entries={eventLog} />
-
-        <AIDecisionPanel
-          activeHouseLabel={HOUSE_META[currentFaction].label}
-          turn={turn}
-          fuzzy={aiFuzzy}
-          finalReason={aiReason}
-        />
       </aside>
 
       {battleContext ? (

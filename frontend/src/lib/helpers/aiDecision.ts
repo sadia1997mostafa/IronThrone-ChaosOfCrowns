@@ -7,11 +7,32 @@ type PlayableHouseId = Exclude<HouseId, 'neutral'>
 
 export type AIFuzzySnapshot = FuzzyStrategicOutput
 
+export type AIDecisionTreeSnapshot = {
+  stateInputs: {
+    ownArmyPower: number
+    borderThreat: number
+    enemyWeakness: number
+    goldPressure: number
+    neutralOpportunity: number
+  }
+  topPriority: {
+    action: 'attack' | 'fortify' | 'recruit' | 'gather'
+    score: number
+  }
+  candidateActions: Array<{
+    label: string
+    action: 'attack' | 'fortify' | 'recruit' | 'gather'
+    score: number
+    chosen?: boolean
+  }>
+  finalDecisionLabel: string
+}
+
 export type AIDecision =
-  | { action: 'gather'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot }
-  | { action: 'recruit'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot }
-  | { action: 'fortify'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot }
-  | { action: 'attack'; sourceId: RegionId; targetId: RegionId; reason: string; fuzzy: AIFuzzySnapshot }
+  | { action: 'gather'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot; tree: AIDecisionTreeSnapshot }
+  | { action: 'recruit'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot; tree: AIDecisionTreeSnapshot }
+  | { action: 'fortify'; regionId: RegionId; reason: string; fuzzy: AIFuzzySnapshot; tree: AIDecisionTreeSnapshot }
+  | { action: 'attack'; sourceId: RegionId; targetId: RegionId; reason: string; fuzzy: AIFuzzySnapshot; tree: AIDecisionTreeSnapshot }
 
 const randomItem = <T,>(items: T[]): T => items[Math.floor(Math.random() * items.length)]
 
@@ -104,14 +125,62 @@ export function pickAIDecision(input: {
 
   attacks.sort((a, b) => b.score - a.score)
 
+  const baselineCandidates: AIDecisionTreeSnapshot['candidateActions'] = [
+    {
+      label: attacks[0] ? `Attack ${regions[attacks[0].targetId].name}` : 'Attack (no legal target)',
+      action: 'attack',
+      score: fuzzy.attackDesire + (attacks[0]?.score || -18),
+    },
+    {
+      label: 'Fortify Frontline',
+      action: 'fortify',
+      score: fuzzy.fortifyDesire,
+    },
+    {
+      label: 'Recruit Reinforcements',
+      action: 'recruit',
+      score: fuzzy.recruitDesire,
+    },
+    {
+      label: 'Gather Resources',
+      action: 'gather',
+      score: fuzzy.gatherDesire,
+    },
+  ]
+
+  baselineCandidates.sort((a, b) => b.score - a.score)
+
+  const topPriority = {
+    action: baselineCandidates[0].action,
+    score: baselineCandidates[0].score,
+  }
+
+  const makeTree = (finalDecisionLabel: string, chosenAction: 'attack' | 'fortify' | 'recruit' | 'gather'): AIDecisionTreeSnapshot => ({
+    stateInputs: {
+      ownArmyPower: metrics.ownArmyPower,
+      borderThreat: metrics.borderThreat,
+      enemyWeakness: metrics.enemyWeakness,
+      goldPressure: metrics.goldPressure,
+      neutralOpportunity: metrics.neutralOpportunity,
+    },
+    topPriority,
+    candidateActions: baselineCandidates.map((candidate) => ({
+      ...candidate,
+      chosen: candidate.action === chosenAction,
+    })),
+    finalDecisionLabel,
+  })
+
   if (fuzzy.attackDesire >= Math.max(fuzzy.fortifyDesire, fuzzy.recruitDesire, fuzzy.gatherDesire) && attacks.length > 0) {
     const best = attacks[0]
+    const finalDecisionLabel = `Attack ${regions[best.targetId].name}`
     return {
       action: 'attack',
       sourceId: best.sourceId,
       targetId: best.targetId,
       reason: `${house} attack desire is highest (${Math.round(fuzzy.attackDesire)}), targeting weakest viable border.`,
       fuzzy,
+      tree: makeTree(finalDecisionLabel, 'attack'),
     }
   }
 
@@ -122,6 +191,7 @@ export function pickAIDecision(input: {
       regionId: randomItem(controlled),
       reason: `${house} economy pressure is ${fuzzy.economyPressure}; gathering resources.`,
       fuzzy,
+      tree: makeTree('Gather Resources', 'gather'),
     }
   }
 
@@ -131,6 +201,7 @@ export function pickAIDecision(input: {
       regionId: lowArmyRegion,
       reason: `${house} recruitment desire is high (${Math.round(fuzzy.recruitDesire)}), reinforcing weak garrison.`,
       fuzzy,
+      tree: makeTree(`Recruit in ${regions[lowArmyRegion].name}`, 'recruit'),
     }
   }
 
@@ -150,6 +221,7 @@ export function pickAIDecision(input: {
       regionId: threatened,
       reason: `${house} border danger is ${fuzzy.borderDanger}; fortifying frontline region.`,
       fuzzy,
+      tree: makeTree(`Fortify ${regions[threatened].name}`, 'fortify'),
     }
   }
 
@@ -158,5 +230,6 @@ export function pickAIDecision(input: {
     regionId: randomItem(controlled),
     reason: `${house} defaults to resource consolidation after fuzzy strategic review.`,
     fuzzy,
+    tree: makeTree('Gather Resources', 'gather'),
   }
 }

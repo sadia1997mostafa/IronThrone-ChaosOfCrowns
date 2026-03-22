@@ -1,9 +1,10 @@
-import type { AIFuzzySnapshot } from '@/lib/helpers/aiDecision'
+import type { AIFuzzySnapshot, AIDecisionTreeSnapshot } from '@/lib/helpers/aiDecision'
 
 type AIDecisionPanelProps = {
   activeHouseLabel: string
   turn: number
   fuzzy: AIFuzzySnapshot | null
+  tree: AIDecisionTreeSnapshot | null
   finalReason: string | null
 }
 
@@ -21,7 +22,7 @@ function DesireRow({ label, value }: { label: string; value: number }) {
   )
 }
 
-export default function AIDecisionPanel({ activeHouseLabel, turn, fuzzy, finalReason }: AIDecisionPanelProps) {
+export default function AIDecisionPanel({ activeHouseLabel, turn, fuzzy, tree, finalReason }: AIDecisionPanelProps) {
   if (!fuzzy) {
     return (
       <section className="ai-panel">
@@ -57,6 +58,50 @@ export default function AIDecisionPanel({ activeHouseLabel, turn, fuzzy, finalRe
         <div className="ai-section">
           <p className="ai-section-title">Final Decision</p>
           <p className="ai-final">{finalReason}</p>
+        </div>
+      ) : null}
+
+      {tree ? (
+        <div className="ai-section">
+          <p className="ai-section-title">Decision Tree</p>
+          <div className="ai-tree-view" role="group" aria-label="AI decision tree">
+            <div className="ai-tree-root">{activeHouseLabel} Turn</div>
+
+            <div className="ai-tree-branch">
+              <p className="ai-tree-title">Strategic State</p>
+              <ul className="ai-tree-list">
+                <li>Army Power: {Math.round(tree.stateInputs.ownArmyPower)}</li>
+                <li>Border Threat: {Math.round(tree.stateInputs.borderThreat)}</li>
+                <li>Enemy Weakness: {Math.round(tree.stateInputs.enemyWeakness)}</li>
+                <li>Gold Pressure: {Math.round(tree.stateInputs.goldPressure)}</li>
+                <li>Neutral Opportunity: {Math.round(tree.stateInputs.neutralOpportunity)}</li>
+              </ul>
+            </div>
+
+            <div className="ai-tree-branch">
+              <p className="ai-tree-title">Strategic Priority (Fuzzy)</p>
+              <p className="ai-tree-line">
+                TOP: <strong>{tree.topPriority.action.toUpperCase()}</strong> ({Math.round(tree.topPriority.score)})
+              </p>
+            </div>
+
+            <div className="ai-tree-branch">
+              <p className="ai-tree-title">Candidate Actions</p>
+              <ul className="ai-tree-list ai-tree-candidates-list">
+                {tree.candidateActions.map((candidate) => (
+                  <li key={candidate.label} className={candidate.chosen ? 'is-chosen' : ''}>
+                    <span>{candidate.label}</span>
+                    <strong>{Math.round(candidate.score)}</strong>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="ai-tree-branch ai-tree-final">
+              <p className="ai-tree-title">Final Decision</p>
+              <p className="ai-tree-line">{tree.finalDecisionLabel}</p>
+            </div>
+          </div>
         </div>
       ) : null}
     </section>

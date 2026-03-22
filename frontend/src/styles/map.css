@@ -779,6 +779,123 @@
   font-size: 0.8rem;
 }
 
+.ai-tree-view {
+  position: relative;
+  border: 1px solid rgba(166, 116, 72, 0.45);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(35, 20, 14, 0.88), rgba(22, 13, 9, 0.92));
+  padding: 10px;
+}
+
+.ai-tree-root {
+  display: inline-block;
+  border: 1px solid rgba(206, 151, 94, 0.72);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #f2d6aa;
+  background: linear-gradient(180deg, rgba(89, 43, 21, 0.8), rgba(48, 24, 12, 0.88));
+}
+
+.ai-tree-branch {
+  position: relative;
+  margin-top: 10px;
+  margin-left: 12px;
+  border: 1px solid rgba(162, 112, 70, 0.5);
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: rgba(23, 14, 10, 0.78);
+}
+
+.ai-tree-branch::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: -8px;
+  width: 1px;
+  height: calc(100% + 8px);
+  background: rgba(191, 137, 87, 0.42);
+}
+
+.ai-tree-branch::after {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 15px;
+  width: 11px;
+  height: 1px;
+  background: rgba(191, 137, 87, 0.42);
+}
+
+.ai-tree-title {
+  color: #f2d8ad !important;
+  font-size: 0.75rem !important;
+  font-weight: 700;
+  margin-bottom: 4px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-tree-line {
+  margin: 0;
+  font-size: 0.74rem;
+  color: #e6cba1;
+}
+
+.ai-tree-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.ai-tree-list li {
+  position: relative;
+  padding-left: 12px;
+  font-size: 0.73rem;
+  color: #ddc195;
+}
+
+.ai-tree-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: rgba(220, 157, 94, 0.85);
+}
+
+.ai-tree-candidates-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid rgba(167, 118, 78, 0.42);
+  border-radius: 7px;
+  padding: 4px 6px 4px 16px;
+  background: rgba(18, 12, 8, 0.66);
+  font-size: 0.72rem !important;
+  color: #dcbf92;
+}
+
+.ai-tree-candidates-list li::before {
+  left: 5px;
+  top: 4px;
+}
+
+.ai-tree-candidates-list li.is-chosen {
+  border-color: rgba(231, 164, 95, 0.7);
+  background: linear-gradient(180deg, rgba(97, 47, 24, 0.76), rgba(54, 27, 14, 0.82));
+  color: #f5d8af;
+  box-shadow: 0 0 10px rgba(197, 115, 60, 0.24);
+}
+
+.ai-tree-final {
+  border-color: rgba(228, 165, 96, 0.7);
+  background: linear-gradient(180deg, rgba(92, 43, 20, 0.84), rgba(52, 25, 13, 0.9));
+}
+
 .battle-modal-backdrop {
   position: fixed;
   inset: 0;
