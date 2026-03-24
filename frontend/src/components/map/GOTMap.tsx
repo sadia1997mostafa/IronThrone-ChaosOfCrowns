@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { mapPaths, type RegionId } from '@/assets/mapPaths'
 import BattleModal from './BattleModal'
+import BattleMinimaxPopup from './BattleMinimaxPopup'
 import BattlePath from './BattlePath'
 import BattleSkirmish3D from './BattleSkirmish3D'
 import ClashEffect from './ClashEffect'
-import AIDecisionPanel, { type AIDecisionTreeSnapshot } from './AIDecisionPanel'
+import AIDecisionPanel, { type AIBattleTreeSnapshot, type AIDecisionTreeSnapshot } from './AIDecisionPanel'
 import AIDecisionPopup from './AIDecisionPopup'
 import EventLog from './EventLog'
 import FloatingStatText from './FloatingStatText'
@@ -17,6 +18,7 @@ import { resolveBattle as calculateBattleResolution } from '@/lib/helpers/battle
 import { pickAIDecision, previewFuzzyInputs } from '@/lib/ai/aiController'
 import type { AIDecisionTrace, FuzzyStrategicOutput } from '@/lib/ai/types'
 import { createInitialDiplomacy, PLAYABLE_HOUSES, type DiplomacyMatrix, type RelationState } from '@/lib/helpers/diplomacy'
+import { BATTLE_LOSS_PERCENT, BattleAction, chooseBestMove, createBattleState } from '@/lib/minimax/battleMinimax'
 
 const VIEW_BOX = '0 0 1536 1024'
 const regionOrder: RegionId[] = [
@@ -150,6 +152,8 @@ export default function GOTMap() {
   const [aiReason, setAiReason] = useState<string | null>(null)
   const [aiFuzzy, setAiFuzzy] = useState<FuzzyStrategicOutput | null>(null)
   const [aiTree, setAiTree] = useState<AIDecisionTreeSnapshot | null>(null)
+  const [aiBattleTree, setAiBattleTree] = useState<AIBattleTreeSnapshot | null>(null)
+  const [battleMinimaxPopupOpen, setBattleMinimaxPopupOpen] = useState(false)
   const [aiSimulationNote, setAiSimulationNote] = useState<string | null>(null)
   const [decisionPopupOpen, setDecisionPopupOpen] = useState(false)
   const [decisionPopupStep, setDecisionPopupStep] = useState(0)
@@ -333,6 +337,65 @@ export default function GOTMap() {
       candidateActions,
       finalDecisionLabel: trace.finalDecisionLabel,
     }
+  }
+
+  const buildBattleTreeSnapshot = (sourceId: RegionId, targetId: RegionId): AIBattleTreeSnapshot => {
+    const attacker = regions[sourceId]
+    const defender = regions[targetId]
+    const battleState = createBattleState({
+      attacker_name: attacker.house,
+      defender_name: defender.house,
+      attacker_army: attacker.army,
+      defender_army: defender.army,
+      region_owner: defender.house,
+    })
+    const result = chooseBestMove(battleState)
+
+    return {
+      attackerName: attacker.house,
+      defenderName: defender.house,
+      sourceRegionName: attacker.name,
+      targetRegionName: defender.name,
+      lossPercent: BATTLE_LOSS_PERCENT,
+      bestAction: result.bestAction,
+      score: result.score,
+      rootScores: Object.values(BattleAction).map((action) => {
+        const branch = result.tree.children.find((entry) => entry.action === action)
+        return {
+          action,
+          score: branch?.score ?? result.score,
+          chosen: action === result.bestAction,
+        }
+      }),
+      debugOutput: result.debugOutput,
+      tree: result.tree,
+    }
+  }
+
+  const runDirectMinimaxDemo = () => {
+    const sourceId: RegionId = 'essos'
+    const targetId: RegionId = 'westerlands'
+    const snapshot = buildBattleTreeSnapshot(sourceId, targetId)
+
+    setAiFuzzy(null)
+    setAiTree(null)
+    setAiBattleTree(snapshot)
+    setBattleMinimaxPopupOpen(true)
+    setAiReason('Direct battle demo: House Targaryen attacks House Lannister. This bypasses fuzzy logic and map movement so you can inspect minimax only.')
+    setAiSimulationNote('Standalone minimax demo only: no fuzzy decision, no pathfinding, no live battle resolution. The panel is showing the battle state-space tree directly.')
+    setDecisionPopupTrace(null)
+    setDecisionPopupReason(null)
+    setSelectedRegion(targetId)
+    setAttackSource(sourceId)
+    triggerActionCue({
+      action: 'attack',
+      houseId: 'targaryen',
+      houseLabel: HOUSE_META.targaryen.label,
+      primaryRegionId: sourceId,
+      targetRegionId: targetId,
+      message: 'Direct demo: House Targaryen attacks House Lannister',
+    })
+    addEvent('Direct minimax demo loaded: House Targaryen vs House Lannister.')
   }
 
   const resolveAttackImmediately = async (sourceId: RegionId, targetId: RegionId) => {
@@ -722,6 +785,8 @@ export default function GOTMap() {
     setAiReason(null)
     setAiFuzzy(null)
     setAiTree(null)
+    setAiBattleTree(null)
+    setBattleMinimaxPopupOpen(false)
     setAiSimulationNote(null)
     clearBattleVisuals()
     setTurnBanner(`${HOUSE_META[nextFaction].label} takes the field`)
@@ -764,6 +829,7 @@ export default function GOTMap() {
     setAiReason(decision.reason)
     setAiFuzzy(decision.trace.strategic)
     setAiTree(buildTreeFromTrace(decision.trace))
+    setAiBattleTree(null)
     await runDecisionVisualization(decision.trace, decision.reason)
     addEvent('AI Pipeline: fuzzy inputs -> memberships -> rules -> final action.')
     addEvent(`AI: ${decision.reason}`)
@@ -805,8 +871,14 @@ export default function GOTMap() {
     setSimulationPhase('ending')
 
     if (decision.action === 'attack') {
-      setAiSimulationNote('Intention simulation only: the house would attack, but battle resolution is intentionally disabled for fuzzy-only testing.')
-      addEvent('Simulation: attack intention recorded only. No battle executed.')
+      if (decision.trace.attackSourceRegionId && decision.targetId) {
+        setAiBattleTree(buildBattleTreeSnapshot(decision.trace.attackSourceRegionId, decision.targetId))
+        setAiSimulationNote('Fuzzy chose Attack, so the panel now shows the full minimax battle tree for this one-on-one clash. No live battle was executed.')
+        addEvent('Simulation: attack intention recorded. Minimax battle tree generated in the AI panel.')
+      } else {
+        setAiSimulationNote('Attack was selected, but the exact battle pair could not be prepared for the minimax explainer.')
+        addEvent('Simulation: attack intention recorded, but minimax battle tree could not be generated.')
+      }
       return
     }
 
@@ -1085,6 +1157,14 @@ export default function GOTMap() {
           </button>
           <button
             type="button"
+            className="panel-btn panel-btn-featured"
+            onClick={runDirectMinimaxDemo}
+            disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
+          >
+            Demo: Targaryen vs Lannister
+          </button>
+          <button
+            type="button"
             className="panel-btn"
             onClick={() => void handleAITakeAction()}
             disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}
@@ -1122,6 +1202,7 @@ export default function GOTMap() {
           fuzzy={aiFuzzy}
           tree={aiTree}
           trace={decisionPopupTrace}
+          battleTree={aiBattleTree}
           finalReason={aiReason}
           simulationNote={aiSimulationNote}
         />
@@ -1273,6 +1354,11 @@ export default function GOTMap() {
         onPause={() => setDecisionPopupPaused(true)}
         onResume={() => setDecisionPopupPaused(false)}
         onClose={closeDecisionPopup}
+      />
+      <BattleMinimaxPopup
+        open={battleMinimaxPopupOpen}
+        battleTree={aiBattleTree}
+        onClose={() => setBattleMinimaxPopupOpen(false)}
       />
       </div>
     </>

@@ -1,5 +1,6 @@
 import { runFuzzyReferenceCases } from '@/lib/ai/fuzzyLogic'
 import type { AIActionType, AIDecisionTrace, FuzzyStrategicOutput } from '@/lib/ai/types'
+import { type BattleAction, type MinimaxTraceNode } from '@/lib/minimax/battleMinimax'
 
 export type AIDecisionTreeSnapshot = {
   stateInputs: {
@@ -22,12 +23,30 @@ export type AIDecisionTreeSnapshot = {
   finalDecisionLabel: string
 }
 
+export type AIBattleTreeSnapshot = {
+  attackerName: string
+  defenderName: string
+  sourceRegionName: string
+  targetRegionName: string
+  lossPercent: number
+  bestAction: BattleAction | null
+  score: number
+  rootScores: Array<{
+    action: BattleAction
+    score: number
+    chosen: boolean
+  }>
+  debugOutput: string
+  tree: MinimaxTraceNode
+}
+
 type AIDecisionPanelProps = {
   activeHouseLabel: string
   turn: number
   fuzzy: FuzzyStrategicOutput | null
   tree: AIDecisionTreeSnapshot | null
   trace?: AIDecisionTrace | null
+  battleTree?: AIBattleTreeSnapshot | null
   finalReason: string | null
   simulationNote?: string | null
 }
@@ -46,6 +65,32 @@ function DesireRow({ label, value }: { label: string; value: number }) {
   )
 }
 
+function BattleTreeNode({ node, depth = 0 }: { node: MinimaxTraceNode; depth?: number }) {
+  return (
+    <div className={`battle-tree-node battle-tree-node-${node.nodeType}`} style={{ ['--tree-depth' as string]: depth }}>
+      <div className="battle-tree-node-head">
+        <p className="battle-tree-node-title">{node.title}</p>
+        <span className="battle-tree-node-score">Score {node.score}</span>
+      </div>
+      <p className="battle-tree-node-state">{node.stateSummary}</p>
+      {node.chosenAction ? <p className="battle-tree-node-choice">Chosen here: {node.chosenAction}</p> : null}
+      {node.children.length ? (
+        <div className="battle-tree-children">
+          {node.children.map((child, index) => (
+            <div key={`${child.label}-${index}`} className={`battle-tree-edge ${child.chosen ? 'is-chosen' : ''}`}>
+              <div className="battle-tree-edge-label">
+                <span>{child.label}</span>
+                <strong>{child.score}</strong>
+              </div>
+              <BattleTreeNode node={child.next} depth={depth + 1} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 const referenceCases = runFuzzyReferenceCases()
 
 export default function AIDecisionPanel({
@@ -54,14 +99,15 @@ export default function AIDecisionPanel({
   fuzzy,
   tree,
   trace,
+  battleTree,
   finalReason,
   simulationNote,
 }: AIDecisionPanelProps) {
-  if (!fuzzy) {
+  if (!fuzzy && !battleTree) {
     return (
       <section className="ai-panel">
         <h3>War Council AI</h3>
-        <p>Run AI action to inspect the fuzzy-only decision system for this turn.</p>
+        <p>Run AI action or the minimax demo to inspect how the system chooses a move.</p>
       </section>
     )
   }
@@ -71,28 +117,34 @@ export default function AIDecisionPanel({
       <h3>War Council AI</h3>
       <p className="ai-panel-meta">{activeHouseLabel} • Turn {turn}</p>
 
-      <div className="ai-section">
-        <p className="ai-section-title">Fuzzy Inputs</p>
-        <p className="ai-tree-line">Own Strength: {Math.round(tree?.stateInputs.ownStrength || 0)}</p>
-        <p className="ai-tree-line">Enemy Strength: {Math.round(tree?.stateInputs.enemyStrength || 0)}</p>
-        <p className="ai-tree-line">Region Importance: {Math.round(tree?.stateInputs.regionImportance || 0)}</p>
-        <p className="ai-tree-line">Gold: {Math.round(tree?.stateInputs.resources || 0)}</p>
-        <p className="ai-tree-line">Aggression: {Math.round(tree?.stateInputs.aggression || 0)}</p>
-      </div>
+      {fuzzy ? (
+        <div className="ai-section">
+          <p className="ai-section-title">Fuzzy Inputs</p>
+          <p className="ai-tree-line">Own Strength: {Math.round(tree?.stateInputs.ownStrength || 0)}</p>
+          <p className="ai-tree-line">Enemy Strength: {Math.round(tree?.stateInputs.enemyStrength || 0)}</p>
+          <p className="ai-tree-line">Region Importance: {Math.round(tree?.stateInputs.regionImportance || 0)}</p>
+          <p className="ai-tree-line">Gold: {Math.round(tree?.stateInputs.resources || 0)}</p>
+          <p className="ai-tree-line">Aggression: {Math.round(tree?.stateInputs.aggression || 0)}</p>
+        </div>
+      ) : null}
 
-      <div className="ai-section">
-        <p className="ai-section-title">Fuzzy Output</p>
-        <DesireRow label="Attack Desire" value={fuzzy.attackDesire} />
-        <DesireRow label="Defend Desire" value={fuzzy.defendDesire} />
-        <DesireRow label="Hold Desire" value={fuzzy.holdDesire} />
-        <DesireRow label="Reinforce Desire" value={fuzzy.reinforceDesire} />
-      </div>
+      {fuzzy ? (
+        <div className="ai-section">
+          <p className="ai-section-title">Fuzzy Output</p>
+          <DesireRow label="Attack Desire" value={fuzzy.attackDesire} />
+          <DesireRow label="Defend Desire" value={fuzzy.defendDesire} />
+          <DesireRow label="Hold Desire" value={fuzzy.holdDesire} />
+          <DesireRow label="Reinforce Desire" value={fuzzy.reinforceDesire} />
+        </div>
+      ) : null}
 
-      <div className="ai-section ai-badges">
-        <span className="ai-badge">Aggression: {fuzzy.aggressionLevel}</span>
-        <span className="ai-badge">Pressure: {fuzzy.pressureLevel}</span>
-        <span className="ai-badge">Readiness: {fuzzy.readinessLevel}</span>
-      </div>
+      {fuzzy ? (
+        <div className="ai-section ai-badges">
+          <span className="ai-badge">Aggression: {fuzzy.aggressionLevel}</span>
+          <span className="ai-badge">Pressure: {fuzzy.pressureLevel}</span>
+          <span className="ai-badge">Readiness: {fuzzy.readinessLevel}</span>
+        </div>
+      ) : null}
 
       {finalReason ? (
         <div className="ai-section">
@@ -116,7 +168,34 @@ export default function AIDecisionPanel({
           </ul>
           <p className="ai-tree-line">Selected: {tree.finalDecisionLabel}</p>
           {trace?.focusRegionName ? <p className="ai-tree-line">Focus Region: {trace.focusRegionName}</p> : null}
+          {trace?.attackSourceRegionName ? <p className="ai-tree-line">Attack Source: {trace.attackSourceRegionName}</p> : null}
           {trace?.targetRegionName ? <p className="ai-tree-line">Target Region: {trace.targetRegionName}</p> : null}
+        </div>
+      ) : null}
+
+      {battleTree ? (
+        <div className="ai-section">
+          <p className="ai-section-title">Minimax Battle Tree</p>
+          <p className="ai-tree-line">
+            Battle: {battleTree.attackerName} from {battleTree.sourceRegionName} vs {battleTree.defenderName} at {battleTree.targetRegionName}
+          </p>
+          <p className="ai-tree-line">Battle stops if either side loses {battleTree.lossPercent}% of the army it started this battle with, or if a side withdraws.</p>
+          <p className="ai-final">Minimax selected {battleTree.bestAction} with final score {battleTree.score}.</p>
+          <ul className="ai-tree-list ai-tree-candidates-list">
+            {battleTree.rootScores.map((root) => (
+              <li key={root.action} className={root.chosen ? 'is-chosen' : ''}>
+                <span>Root action: {root.action}</span>
+                <strong>{root.score}</strong>
+              </li>
+            ))}
+          </ul>
+          <div className="battle-tree-diagram">
+            <BattleTreeNode node={battleTree.tree} />
+          </div>
+          <details className="battle-trace-details">
+            <summary>Readable step-by-step trace</summary>
+            <pre className="battle-trace-output">{battleTree.debugOutput}</pre>
+          </details>
         </div>
       ) : null}
 
@@ -134,17 +213,19 @@ export default function AIDecisionPanel({
         </div>
       ) : null}
 
-      <div className="ai-section">
-        <p className="ai-section-title">Reference Test Cases</p>
-        <ul className="ai-tree-list">
-          {referenceCases.map((testCase) => (
-            <li key={testCase.house}>
-              <span>{testCase.house}: expected {testCase.expectedAction}, got {testCase.actualAction}</span>
-              <strong>{Math.round(Math.max(testCase.scores.attackDesire, testCase.scores.defendDesire, testCase.scores.holdDesire, testCase.scores.reinforceDesire))}</strong>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {fuzzy ? (
+        <div className="ai-section">
+          <p className="ai-section-title">Reference Test Cases</p>
+          <ul className="ai-tree-list">
+            {referenceCases.map((testCase) => (
+              <li key={testCase.house}>
+                <span>{testCase.house}: expected {testCase.expectedAction}, got {testCase.actualAction}</span>
+                <strong>{Math.round(Math.max(testCase.scores.attackDesire, testCase.scores.defendDesire, testCase.scores.holdDesire, testCase.scores.reinforceDesire))}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   )
 }
