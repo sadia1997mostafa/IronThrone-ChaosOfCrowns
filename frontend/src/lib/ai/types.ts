@@ -3,10 +3,11 @@ import type { HouseId, RegionInfo } from '@/data/regionData'
 
 export type PlayableHouseId = Exclude<HouseId, 'neutral'>
 export type DiplomacyState = 'allied' | 'neutral' | 'hostile'
-export type RiskLevel = 'Low' | 'Medium' | 'High'
 export type AILinguisticLevel = 'Low' | 'Medium' | 'High'
-
-export type AIActionType = 'attack' | 'fortify' | 'recruit' | 'gather'
+export type AIActionType = 'attack' | 'defend' | 'hold' | 'reinforce'
+export type FuzzyVariableName = 'ownStrength' | 'enemyStrength' | 'regionImportance' | 'resources' | 'aggression'
+export type FuzzyCategory = 'low' | 'medium' | 'high'
+export type RuleIntensity = 'medium' | 'mediumHigh' | 'high'
 
 export type AIInputState = {
   house: PlayableHouseId
@@ -20,62 +21,100 @@ export type AIInputState = {
   }
 }
 
-export type StrategicMetrics = {
-  ownArmyPower: number
-  enemyWeakness: number
-  goldPressure: number
-  borderThreat: number
-  neutralOpportunity: number
-  targetValue: number
-  dragonStamina: number
+export type FuzzyInputValues = {
+  ownStrength: number
+  enemyStrength: number
+  regionImportance: number
+  resources: number
+  aggression: number
+}
+
+export type HouseTraitProfile = {
+  label: string
+  aggression: number
+}
+
+export type FuzzyMembershipSet = Record<FuzzyCategory, number>
+
+export type FuzzyMembershipMap = Record<FuzzyVariableName, FuzzyMembershipSet>
+
+export type FuzzyRuleEvaluation = {
+  id: string
+  description: string
+  action: AIActionType
+  intensity: RuleIntensity
+  strength: number
+}
+
+export type FuzzyRuleCondition = {
+  variable: FuzzyVariableName
+  category: FuzzyCategory
+  label: string
+  value: number
+}
+
+export type FuzzyRuleCalculation = FuzzyRuleEvaluation & {
+  conditions: FuzzyRuleCondition[]
+  contribution: number
+}
+
+export type FuzzyActionBreakdown = {
+  action: AIActionType
+  label: string
+  total: number
+  contributions: Array<{
+    ruleId: string
+    contribution: number
+  }>
 }
 
 export type FuzzyStrategicOutput = {
   attackDesire: number
-  fortifyDesire: number
-  recruitDesire: number
-  gatherDesire: number
-  dragonDeployDesire: number
+  defendDesire: number
+  holdDesire: number
+  reinforceDesire: number
   aggressionLevel: AILinguisticLevel
-  threatLevel: AILinguisticLevel
-  desperationLevel: AILinguisticLevel
-  economyPressure: AILinguisticLevel
-  borderDanger: AILinguisticLevel
+  pressureLevel: AILinguisticLevel
+  readinessLevel: AILinguisticLevel
 }
 
 export type CandidateAction = {
   key: string
   action: AIActionType
   label: string
-  regionId?: RegionId
-  sourceId?: RegionId
-  targetId?: RegionId
-  score?: number
-  metadata?: {
-    attackPower?: number
-    defensePower?: number
-  }
+  score: number
 }
 
-export type BattlePrediction = {
-  targetId: RegionId
-  targetName: string
-  winChance: number
-  expectedAttackerLoss: number
-  expectedDefenderLoss: number
-  risk: RiskLevel
+export type FuzzyReferenceCase = {
+  house: string
+  inputs: FuzzyInputValues
+  expectedAction: AIActionType
+}
+
+export type FuzzyReferenceResult = FuzzyReferenceCase & {
+  actualAction: AIActionType
+  scores: FuzzyStrategicOutput
 }
 
 export type AIDecisionTrace = {
+  inputs: FuzzyInputValues
+  memberships: FuzzyMembershipMap
   strategic: FuzzyStrategicOutput
   candidates: CandidateAction[]
-  scoredCandidates: CandidateAction[]
-  battlePrediction: BattlePrediction | null
+  rules: FuzzyRuleEvaluation[]
+  ruleCalculations: FuzzyRuleCalculation[]
+  actionBreakdown: FuzzyActionBreakdown[]
+  focusRegionId: RegionId | null
+  focusRegionName: string | null
+  targetRegionId: RegionId | null
+  targetRegionName: string | null
   finalDecisionLabel: string
 }
 
-export type AIDecision =
-  | { action: 'gather'; regionId: RegionId; reason: string; trace: AIDecisionTrace }
-  | { action: 'recruit'; regionId: RegionId; reason: string; trace: AIDecisionTrace }
-  | { action: 'fortify'; regionId: RegionId; reason: string; trace: AIDecisionTrace }
-  | { action: 'attack'; sourceId: RegionId; targetId: RegionId; reason: string; trace: AIDecisionTrace }
+export type AIDecision = {
+  action: AIActionType
+  regionId: RegionId | null
+  targetId: RegionId | null
+  reason: string
+  trace: AIDecisionTrace
+}

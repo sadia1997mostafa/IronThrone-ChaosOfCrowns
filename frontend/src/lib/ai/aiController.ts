@@ -1,212 +1,195 @@
 import type { RegionId } from '@/assets/mapPaths'
-import type { AIInputState, AIDecision, AIDecisionTrace, CandidateAction, StrategicMetrics } from './types'
+import type { RegionInfo } from '@/data/regionData'
+import type { AIInputState, AIDecision, CandidateAction, HouseTraitProfile, PlayableHouseId } from './types'
 import { evaluateFuzzyStrategic } from './fuzzyLogic'
-import { scoreCandidatesMinimax } from './minimax'
-import { simulateBattleMonteCarlo } from './monteCarlo'
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-function randomItem<T>(items: T[]): T {
-  return items[Math.floor(Math.random() * items.length)]
+const HOUSE_TRAITS: Record<PlayableHouseId, HouseTraitProfile> = {
+  stark: { label: 'House Stark', aggression: 40 },
+  lannister: { label: 'House Lannister', aggression: 75 },
+  targaryen: { label: 'House Targaryen', aggression: 90 },
+  tyrell: { label: 'House Tyrell', aggression: 50 },
 }
 
-function buildStrategicMetrics(input: AIInputState): StrategicMetrics {
-  const { house, regions, availableRegionIds, diplomacy, resources } = input
-  const controlled = availableRegionIds.filter((id) => regions[id].houseId === house)
+const REINFORCE_GOLD_COST = 20
 
-  const ownArmyTotal = controlled.reduce((sum, id) => sum + regions[id].army, 0)
-  const ownArmyPower = clamp((ownArmyTotal / Math.max(1, controlled.length * 95)) * 100, 0, 100)
-
-  const hostileBorders = controlled.flatMap((id) =>
-    regions[id].neighbors.filter((neighborId) => {
-      const owner = regions[neighborId].houseId
-      if (owner === 'neutral' || owner === house) return false
-      return diplomacy[house][owner] === 'hostile'
-    })
-  )
-
-  const borderThreat = clamp(hostileBorders.length * 18, 0, 100)
-
-  const weakTargets = controlled.flatMap((id) =>
-    regions[id].neighbors.filter((neighborId) => {
-      const n = regions[neighborId]
-      if (n.houseId === house) return false
-      return n.army + n.defense <= regions[id].army + 14
-    })
-  )
-
-  const enemyWeakness = clamp(weakTargets.length * 16, 0, 100)
-
-  const neutralTargets = controlled.flatMap((id) =>
-    regions[id].neighbors.filter((neighborId) => regions[neighborId].houseId === 'neutral')
-  )
-  const neutralOpportunity = clamp(neutralTargets.length * 20, 0, 100)
-
-  const avgTargetValue = controlled.length
-    ? controlled
-        .flatMap((id) => regions[id].neighbors)
-        .reduce((acc, targetId) => {
-          const target = regions[targetId]
-          return acc + (target.resources.length * 10 + target.defense * 0.8)
-        }, 0) / controlled.length
-    : 0
-
-  const targetValue = clamp(avgTargetValue / 2.2, 0, 100)
-  const goldPressure = clamp(100 - resources.gold / 7, 0, 100)
-
-  return {
-    ownArmyPower,
-    enemyWeakness,
-    goldPressure,
-    borderThreat,
-    neutralOpportunity,
-    targetValue,
-    dragonStamina: 62,
-  }
+const REGION_IMPORTANCE_BONUS: Partial<Record<RegionId, number>> = {
+  riverlands: 10,
+  reach: 8,
+  westerlands: 8,
+  essos: 10,
+  braavos: 7,
+  north: 6,
 }
 
-function buildCandidates(input: AIInputState): CandidateAction[] {
+function regionImportanceScore(regionId: RegionId, region: RegionInfo) {
+  const base = region.resources.length * 10 + region.defense * 0.7 + region.neighbors.length * 4
+  return clamp(base + (REGION_IMPORTANCE_BONUS[regionId] || 0), 0, 100)
+}
+
+function buildFrontier(input: AIInputState) {
   const { house, regions, availableRegionIds, diplomacy } = input
   const controlled = availableRegionIds.filter((id) => regions[id].houseId === house)
-  const candidates: CandidateAction[] = []
-
-  for (const regionId of controlled) {
-    const territory = regions[regionId]
-    candidates.push({
-      key: `recruit-${regionId}`,
-      action: 'recruit',
-      regionId,
-      label: `Recruit in ${territory.name}`,
-      score: Math.max(0, 90 - territory.army),
-    })
-
-    candidates.push({
-      key: `fortify-${regionId}`,
-      action: 'fortify',
-      regionId,
-      label: `Fortify ${territory.name}`,
-      score: territory.defense < 28 ? 56 + (28 - territory.defense) : 28,
-    })
-
-    candidates.push({
-      key: `gather-${regionId}`,
-      action: 'gather',
-      regionId,
-      label: `Gather in ${territory.name}`,
-      score: territory.resources.length * 14,
-    })
-
-    for (const targetId of territory.neighbors) {
-      const target = regions[targetId]
-      if (target.houseId === house) continue
-      if (target.houseId !== 'neutral' && diplomacy[house][target.houseId] !== 'hostile') continue
-
-      const attackPower = territory.army
-      const defensePower = target.army + target.defense
-      candidates.push({
-        key: `attack-${regionId}-${targetId}`,
-        action: 'attack',
-        sourceId: regionId,
-        targetId,
-        label: `Attack ${target.name} from ${territory.name}`,
-        score: attackPower - defensePower,
-        metadata: {
-          attackPower,
-          defensePower,
-        },
+  const hostileOrNeutralNeighbors = controlled.flatMap((id) =>
+    regions[id].neighbors
+      .map((neighborId) => ({ sourceId: id, targetId: neighborId }))
+      .filter(({ targetId }) => {
+        const owner = regions[targetId].houseId
+        if (owner === house) return false
+        if (owner === 'neutral') return true
+        return diplomacy[house][owner] === 'hostile'
       })
-    }
-  }
+  )
 
-  return candidates
+  return {
+    controlled,
+    hostileOrNeutralNeighbors,
+  }
 }
 
-function toDecision(
-  best: CandidateAction,
-  reason: string,
-  trace: AIDecisionTrace
-): AIDecision {
-  if (best.action === 'attack' && best.sourceId && best.targetId) {
-    return {
-      action: 'attack',
-      sourceId: best.sourceId,
-      targetId: best.targetId,
-      reason,
-      trace,
-    }
+function buildFuzzyInputs(input: AIInputState) {
+  const { house, regions, resources, diplomacy } = input
+  const trait = HOUSE_TRAITS[house]
+  const { controlled, hostileOrNeutralNeighbors } = buildFrontier(input)
+
+  const ownArmyTotal = controlled.reduce((sum, regionId) => sum + regions[regionId].army, 0)
+  const ownStrength = clamp((ownArmyTotal / Math.max(1, controlled.length * 90)) * 100, 0, 100)
+
+  const frontierThreats = hostileOrNeutralNeighbors.map(({ targetId }) => {
+    const target = regions[targetId]
+    const relationWeight =
+      target.houseId === 'neutral' || target.houseId === house ? 1 : diplomacy[house][target.houseId] === 'hostile' ? 1.15 : 1
+
+    // Simple frontier pressure: nearby army plus defense.
+    return clamp((target.army + target.defense) * relationWeight, 0, 100)
+  })
+
+  const enemyStrength = frontierThreats.length
+    ? clamp(frontierThreats.reduce((sum, value) => sum + value, 0) / frontierThreats.length, 0, 100)
+    : 25
+
+  const focusTarget = hostileOrNeutralNeighbors
+    .map(({ sourceId, targetId }) => ({
+      sourceId,
+      targetId,
+      sourceRegion: regions[sourceId],
+      targetRegion: regions[targetId],
+      importance: regionImportanceScore(targetId, regions[targetId]),
+      attackMargin: regions[sourceId].army - (regions[targetId].army + regions[targetId].defense),
+    }))
+    .sort((a, b) => b.importance - a.importance || b.attackMargin - a.attackMargin)[0]
+
+  const focusOwnedRegion = controlled
+    .map((regionId) => ({
+      regionId,
+      region: regions[regionId],
+      importance: regionImportanceScore(regionId, regions[regionId]),
+    }))
+    .sort((a, b) => b.importance - a.importance)[0]
+
+  const regionImportance = focusTarget?.importance || focusOwnedRegion?.importance || 50
+  const resourceReadiness = clamp((resources.gold / 320) * 100, 0, 100)
+
+  return {
+    ownStrength: Math.round(ownStrength * 100) / 100,
+    enemyStrength: Math.round(enemyStrength * 100) / 100,
+    regionImportance: Math.round(regionImportance * 100) / 100,
+    resources: Math.round(resourceReadiness * 100) / 100,
+    aggression: trait.aggression,
+    focusTarget,
+    focusOwnedRegion,
+  }
+}
+
+export function previewFuzzyInputs(input: AIInputState) {
+  const fuzzyInputs = buildFuzzyInputs(input)
+
+  return {
+    ownStrength: fuzzyInputs.ownStrength,
+    enemyStrength: fuzzyInputs.enemyStrength,
+    regionImportance: fuzzyInputs.regionImportance,
+    resources: fuzzyInputs.resources,
+    aggression: fuzzyInputs.aggression,
+  }
+}
+
+function buildReason(house: PlayableHouseId, action: CandidateAction['action'], focusName: string | null) {
+  const houseLabel = HOUSE_TRAITS[house].label
+
+  if (action === 'attack') {
+    return `${houseLabel} intends to attack${focusName ? ` toward ${focusName}` : ''} because its attack desire is strongest this turn.`
   }
 
-  if (best.action === 'fortify' && best.regionId) {
-    return {
-      action: 'fortify',
-      regionId: best.regionId,
-      reason,
-      trace,
-    }
+  if (action === 'defend') {
+    return `${houseLabel} intends to defend${focusName ? ` around ${focusName}` : ''} because enemy pressure outweighs expansion.`
   }
 
-  if (best.action === 'recruit' && best.regionId) {
-    return {
-      action: 'recruit',
-      regionId: best.regionId,
-      reason,
-      trace,
-    }
+  if (action === 'reinforce') {
+    return `${houseLabel} intends to reinforce${focusName ? ` near ${focusName}` : ''} because strength or supplies need improvement first.`
   }
 
-  if (best.regionId) {
-    return {
-      action: 'gather',
-      regionId: best.regionId,
-      reason,
-      trace,
-    }
-  }
-
-  throw new Error('Invalid AI decision candidate')
+  return `${houseLabel} holds position${focusName ? ` around ${focusName}` : ''} while conditions remain balanced.`
 }
 
 export function pickAIDecision(input: AIInputState): AIDecision | null {
-  const { house, regions } = input
-  const candidates = buildCandidates(input)
-  if (candidates.length === 0) return null
+  const { controlled } = buildFrontier(input)
+  if (controlled.length === 0) return null
 
-  const metrics = buildStrategicMetrics(input)
-  const strategic = evaluateFuzzyStrategic(metrics)
-  const scoredCandidates = scoreCandidatesMinimax(candidates, strategic)
+  const fuzzyInputs = buildFuzzyInputs(input)
+  const evaluation = evaluateFuzzyStrategic({
+    ownStrength: fuzzyInputs.ownStrength,
+    enemyStrength: fuzzyInputs.enemyStrength,
+    regionImportance: fuzzyInputs.regionImportance,
+    resources: fuzzyInputs.resources,
+    aggression: fuzzyInputs.aggression,
+  })
 
-  let selected = scoredCandidates[0]
-  let battlePrediction: AIDecisionTrace['battlePrediction'] = null
+  const affordableCandidates = evaluation.candidates.filter((candidate) => {
+    if (candidate.action !== 'reinforce') return true
+    return input.resources.gold >= REINFORCE_GOLD_COST
+  })
 
-  if (selected.action === 'attack' && selected.sourceId && selected.targetId) {
-    const prediction = simulateBattleMonteCarlo({
-      attacker: regions[selected.sourceId],
-      defender: regions[selected.targetId],
-    })
+  const selected = affordableCandidates[0] || evaluation.candidates[0]
+  const focusRegionId = fuzzyInputs.focusOwnedRegion?.regionId || fuzzyInputs.focusTarget?.sourceId || null
+  const focusRegionName = focusRegionId ? input.regions[focusRegionId].name : null
+  const targetRegionId = selected.action === 'attack' ? fuzzyInputs.focusTarget?.targetId || null : null
+  const targetRegionName = targetRegionId ? input.regions[targetRegionId].name : null
+  const finalDecisionLabel =
+    selected.action === 'attack' && targetRegionName
+      ? `Attack ${targetRegionName}`
+      : selected.action === 'defend' && focusRegionName
+        ? `Defend ${focusRegionName}`
+        : selected.action === 'reinforce' && focusRegionName
+          ? `Reinforce ${focusRegionName}`
+          : focusRegionName
+            ? `Hold ${focusRegionName}`
+            : selected.label
 
-    battlePrediction = {
-      targetId: selected.targetId,
-      targetName: regions[selected.targetId].name,
-      winChance: prediction.winChance,
-      expectedAttackerLoss: prediction.expectedAttackerLoss,
-      expectedDefenderLoss: prediction.expectedDefenderLoss,
-      risk: prediction.risk,
-    }
-
-    if (prediction.risk === 'High') {
-      const fallback = scoredCandidates.find((candidate) => candidate.action !== 'attack')
-      if (fallback) selected = fallback
-    }
+  return {
+    action: selected.action,
+    regionId: focusRegionId,
+    targetId: targetRegionId,
+    reason: buildReason(input.house, selected.action, targetRegionName || focusRegionName),
+    trace: {
+      inputs: {
+        ownStrength: fuzzyInputs.ownStrength,
+        enemyStrength: fuzzyInputs.enemyStrength,
+        regionImportance: fuzzyInputs.regionImportance,
+        resources: fuzzyInputs.resources,
+        aggression: fuzzyInputs.aggression,
+      },
+      memberships: evaluation.memberships,
+      strategic: evaluation.strategic,
+      candidates: evaluation.candidates,
+      rules: evaluation.rules,
+      ruleCalculations: evaluation.ruleCalculations,
+      actionBreakdown: evaluation.actionBreakdown,
+      focusRegionId,
+      focusRegionName,
+      targetRegionId,
+      targetRegionName,
+      finalDecisionLabel,
+    },
   }
-
-  const reason = `${house} chooses ${selected.label.toLowerCase()} based on strategic pressure and tactical score.`
-  const trace: AIDecisionTrace = {
-    strategic,
-    candidates,
-    scoredCandidates,
-    battlePrediction,
-    finalDecisionLabel: selected.label,
-  }
-
-  return toDecision(selected, reason, trace)
 }
