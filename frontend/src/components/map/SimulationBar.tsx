@@ -8,20 +8,22 @@ type SimulationBarProps = {
   turn: number
   currentFaction: PlayableHouseId | null
   phase: 'idle' | 'battle' | 'ending'
-  gold: number
-  food: number
-  influence: number
   factionColors: Record<PlayableHouseId, string>
+  aiInputs?: {
+    ownStrength: number
+    enemyStrength: number
+    regionImportance: number
+    resources: number
+    aggression: number
+  } | null
 }
 
 export default function SimulationBar({
   turn,
   currentFaction,
   phase,
-  gold,
-  food,
-  influence,
   factionColors,
+  aiInputs,
 }: SimulationBarProps) {
   const factionLabel = currentFaction ? {
     stark: 'House Stark',
@@ -49,25 +51,22 @@ export default function SimulationBar({
         <span className={`sim-value phase-${phase}`}>{phase.toUpperCase()}</span>
       </div>
 
-      <div className="sim-divider" aria-hidden />
+      {aiInputs ? (
+        <>
+          <div className="sim-divider" aria-hidden />
 
-      <div className="sim-section sim-resource sim-gold">
-        <span className="sim-icon">💰</span>
-        <span className="sim-label">Gold</span>
-        <span className="sim-value">{gold}</span>
-      </div>
-
-      <div className="sim-section sim-resource sim-food">
-        <span className="sim-icon">🌾</span>
-        <span className="sim-label">Food</span>
-        <span className="sim-value">{food}</span>
-      </div>
-
-      <div className="sim-section sim-resource sim-influence">
-        <span className="sim-icon">⚜️</span>
-        <span className="sim-label">Influence</span>
-        <span className="sim-value">{influence}</span>
-      </div>
+          <div className="sim-section sim-ai-group">
+            <span className="sim-label sim-ai-title">Fuzzy Inputs</span>
+            <div className="sim-ai-grid">
+              <span className="sim-ai-pill">Own {Math.round(aiInputs.ownStrength)}</span>
+              <span className="sim-ai-pill">Enemy {Math.round(aiInputs.enemyStrength)}</span>
+              <span className="sim-ai-pill">Region {Math.round(aiInputs.regionImportance)}</span>
+              <span className="sim-ai-pill">Gold Input {Math.round(aiInputs.resources)}</span>
+              <span className="sim-ai-pill">Aggro {Math.round(aiInputs.aggression)}</span>
+            </div>
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }
