@@ -106,6 +106,8 @@ export type AIDecisionTrace = {
   actionBreakdown: FuzzyActionBreakdown[]
   focusRegionId: RegionId | null
   focusRegionName: string | null
+  attackSourceRegionId: RegionId | null
+  attackSourceRegionName: string | null
   targetRegionId: RegionId | null
   targetRegionName: string | null
   finalDecisionLabel: string

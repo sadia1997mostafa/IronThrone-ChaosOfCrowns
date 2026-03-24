@@ -153,6 +153,8 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
   const selected = affordableCandidates[0] || evaluation.candidates[0]
   const focusRegionId = fuzzyInputs.focusOwnedRegion?.regionId || fuzzyInputs.focusTarget?.sourceId || null
   const focusRegionName = focusRegionId ? input.regions[focusRegionId].name : null
+  const attackSourceRegionId = selected.action === 'attack' ? fuzzyInputs.focusTarget?.sourceId || null : null
+  const attackSourceRegionName = attackSourceRegionId ? input.regions[attackSourceRegionId].name : null
   const targetRegionId = selected.action === 'attack' ? fuzzyInputs.focusTarget?.targetId || null : null
   const targetRegionName = targetRegionId ? input.regions[targetRegionId].name : null
   const finalDecisionLabel =
@@ -187,6 +189,8 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
       actionBreakdown: evaluation.actionBreakdown,
       focusRegionId,
       focusRegionName,
+      attackSourceRegionId,
+      attackSourceRegionName,
       targetRegionId,
       targetRegionName,
       finalDecisionLabel,
