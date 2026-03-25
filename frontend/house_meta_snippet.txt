@@ -1,0 +1,36 @@
+const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string; unitImage?: string; unitModel?: string }> = {
+  stark: {
+    label: 'House Stark',
+    color: '#7dc4ff',
+    glyph: 'ðŸº',
+    unitImage: '/images/houses/stark/unit.png',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+  lannister: {
+    label: 'House Lannister',
+    color: '#ff9d67',
+    glyph: 'ðŸ¦',
+    unitImage: '/images/houses/lannister/unit.png',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+  targaryen: {
+    label: 'House Targaryen',
+    color: '#ff6f6f',
+    glyph: 'ðŸ‰',
+    unitImage: '/images/houses/targaryen/unit.png',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+  tyrell: {
+    label: 'House Tyrell',
+    color: '#a5de8b',
+    glyph: 'ðŸŒ¿',
+    unitImage: '/images/houses/tyrell/unit.png',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+  neutral: {
+    label: 'Neutral Houses',
+    color: '#c6ab85',
+    glyph: 'âšœ',
+    unitModel: '/models/epic_black_golden_cyber_warrior.glb',
+  },
+}

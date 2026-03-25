@@ -28,14 +28,12 @@ const regionOrder: RegionId[] = [
   'reach',
   'stormlands',
   'dorne',
-  'iron_islands',
   'essos',
-  'braavos',
 ]
 
-type PlayableHouseId = Exclude<HouseId, 'neutral'>
+type PlayableHouseId = HouseId
 
-const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string; unitImage?: string; unitModel?: string }> = {
+const HOUSE_META: Record<string, { label: string; color: string; glyph: string; unitImage?: string; unitModel?: string }> = {
   stark: {
     label: 'House Stark',
     color: '#7dc4ff',
@@ -216,9 +214,7 @@ export default function GOTMap() {
 
     for (const regionId of availableRegions) {
       const owner = regions[regionId].houseId
-      if (owner !== 'neutral') {
-        counts[owner] += 1
-      }
+      counts[owner] += 1
     }
 
     return counts
@@ -234,9 +230,7 @@ export default function GOTMap() {
 
     for (const regionId of availableRegions) {
       const owner = regions[regionId].houseId
-      if (owner !== 'neutral') {
-        totals[owner] += regions[regionId].army
-      }
+      totals[owner] += regions[regionId].army
     }
 
     return totals
@@ -312,8 +306,6 @@ export default function GOTMap() {
     const target = regions[targetId]
     if (!source.neighbors.includes(targetId)) return false
     if (source.houseId === target.houseId) return false
-    if (target.houseId === 'neutral') return true
-    if (source.houseId === 'neutral') return false
     return diplomacy[source.houseId][target.houseId] === 'hostile'
   }
 
@@ -481,6 +473,8 @@ export default function GOTMap() {
     }
   }
 
+  const getFinalStepIndex = (trace: AIDecisionTrace) => trace.ruleCalculations.length + 3
+
   const evaluateMinimaxBattle = (sourceId: RegionId, targetId: RegionId) => {
     const attacker = regions[sourceId]
     const defender = regions[targetId]
@@ -541,6 +535,47 @@ export default function GOTMap() {
       message: 'Direct demo: House Targaryen attacks House Lannister',
     })
     addEvent('Direct minimax demo loaded: House Targaryen vs House Lannister.')
+  }
+
+  const runAISmokeTest = () => {
+    const decision = pickAIDecision({
+      house: currentFaction,
+      regions,
+      availableRegionIds: availableRegions,
+      diplomacy,
+      resources: resourcesByHouse[currentFaction],
+    })
+
+    if (!decision) {
+      addEvent(`${HOUSE_META[currentFaction].label} has no legal smoke-test decision.`)
+      return
+    }
+
+    setAiReason(`Smoke test: ${decision.reason}`)
+    setAiFuzzy(decision.trace.strategic)
+    setAiTree(buildTreeFromTrace(decision.trace))
+    setDecisionPopupTrace(decision.trace)
+    setDecisionPopupReason(`Smoke test only: no state changes are applied.`)
+    setDecisionPopupHouseLabel(HOUSE_META[currentFaction].label)
+    setDecisionPopupStep(Math.max(0, getFinalStepIndex(decision.trace)))
+    setDecisionPopupPaused(true)
+    setDecisionPopupOpen(true)
+    setSelectedRegion(decision.regionId || decision.targetId)
+
+    if (decision.action === 'attack' && decision.trace.attackSourceRegionId && decision.targetId) {
+      const { snapshot } = evaluateMinimaxBattle(decision.trace.attackSourceRegionId, decision.targetId)
+      setAiBattleTree(snapshot)
+      setAiSimulationNote(
+        `Smoke test pipeline: fuzzy chose ${decision.action}, MCTS picked ${decision.trace.mcts?.selectedLabel ?? 'the target'}, and minimax battle preview was generated.`
+      )
+    } else {
+      setAiBattleTree(null)
+      setAiSimulationNote(
+        `Smoke test pipeline: fuzzy chose ${decision.action}, and MCTS selected ${decision.trace.mcts?.selectedLabel ?? decision.trace.focusRegionName ?? 'the focus region'}.`
+      )
+    }
+
+    addEvent(`AI smoke test ran for ${HOUSE_META[currentFaction].label}: ${decision.trace.finalDecisionLabel}.`)
   }
 
   const resolveAttackImmediately = async (sourceId: RegionId, targetId: RegionId) => {
@@ -1632,6 +1667,14 @@ export default function GOTMap() {
           </button>
           <button
             type="button"
+            className="panel-btn panel-btn-featured"
+            onClick={runAISmokeTest}
+            disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
+          >
+            Run AI Smoke Test
+          </button>
+          <button
+            type="button"
             className="panel-btn"
             onClick={() => void handleAITakeAction()}
             disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}
@@ -1752,7 +1795,7 @@ export default function GOTMap() {
 
             {attackSource ? (
               <p className="attack-hint">
-                Attack mode: click a hostile or neutral neighboring region to launch the clash.
+                Attack mode: click a hostile neighboring region to launch the clash.
               </p>
             ) : null}
 

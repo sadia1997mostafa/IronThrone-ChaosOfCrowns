@@ -302,6 +302,7 @@ export default function AIDecisionPopup({
           <div className={`ai-tree-live-branch ai-tree-live-final ${step >= finalStep ? 'is-on' : ''}`}>
             <p className="ai-tree-live-title">5. Final Decision</p>
             <p>{trace.finalDecisionLabel}</p>
+            {trace.mcts ? <p>MCTS Selected: {trace.mcts.selectedLabel}</p> : null}
             {trace.focusRegionName ? <p>Focus Region: {trace.focusRegionName}</p> : null}
             {trace.targetRegionName ? <p>Target Region: {trace.targetRegionName}</p> : null}
             {finalReason ? <p className="ai-tree-live-reason">{finalReason}</p> : null}

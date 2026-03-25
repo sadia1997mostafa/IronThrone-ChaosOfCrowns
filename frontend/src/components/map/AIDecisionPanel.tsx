@@ -173,6 +173,23 @@ export default function AIDecisionPanel({
         </div>
       ) : null}
 
+      {trace?.mcts ? (
+        <div className="ai-section">
+          <p className="ai-section-title">MCTS Planner</p>
+          <p className="ai-tree-line">
+            Selected: {trace.mcts.selectedLabel} ({trace.mcts.iterations} iterations, rollout depth {trace.mcts.rolloutDepth})
+          </p>
+          <ul className="ai-tree-list ai-tree-candidates-list">
+            {trace.mcts.candidates.map((candidate) => (
+              <li key={candidate.label} className={candidate.chosen ? 'is-chosen' : ''}>
+                <span>{candidate.label} ({candidate.visits} visits)</span>
+                <strong>{Math.round(candidate.averageScore)}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {battleTree ? (
         <div className="ai-section">
           <p className="ai-section-title">Minimax Battle Tree</p>

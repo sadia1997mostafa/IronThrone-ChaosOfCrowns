@@ -1,6 +1,6 @@
 import type { RegionId } from '@/assets/mapPaths'
 
-export type HouseId = 'stark' | 'lannister' | 'targaryen' | 'tyrell' | 'neutral'
+export type HouseId = 'stark' | 'lannister' | 'targaryen' | 'tyrell'
 
 export type RegionInfo = {
   name: string
@@ -17,7 +17,7 @@ export type RegionInfo = {
   neighbors: RegionId[]
 }
 
-export const regionData: Record<RegionId, RegionInfo> = {
+export const regionData = {
   north: {
     name: 'The North',
     houseId: 'stark',
@@ -27,29 +27,29 @@ export const regionData: Record<RegionId, RegionInfo> = {
     resources: ['Timber', 'Food', 'Defensive terrain'],
     description: 'A vast, cold, ancient land ruled by House Stark.',
     tokenPosition: { x: 470, y: 180 },
-    neighbors: ['vale', 'riverlands', 'iron_islands'],
+    neighbors: ['vale', 'riverlands'],
   },
   vale: {
     name: 'The Vale',
-    houseId: 'neutral',
-    house: 'Neutral Houses',
+    houseId: 'stark',
+    house: 'House Stark',
     army: 62,
     defense: 21,
     resources: ['Mountain passes', 'Silver', 'Fortified castles'],
     description: 'A defensible highland realm protected by steep mountains and narrow routes.',
     tokenPosition: { x: 930, y: 360 },
-    neighbors: ['north', 'riverlands', 'stormlands', 'braavos'],
+    neighbors: ['north', 'riverlands', 'stormlands'],
   },
   riverlands: {
     name: 'Riverlands',
-    houseId: 'neutral',
-    house: 'Neutral Houses',
+    houseId: 'lannister',
+    house: 'House Lannister',
     army: 68,
     defense: 15,
     resources: ['River trade', 'Farmland', 'Crossing routes'],
     description: 'A contested crossroads region where logistics and river control decide wars.',
     tokenPosition: { x: 650, y: 430 },
-    neighbors: ['north', 'vale', 'westerlands', 'reach', 'stormlands', 'iron_islands'],
+    neighbors: ['north', 'vale', 'westerlands', 'reach', 'stormlands'],
   },
   westerlands: {
     name: 'The Westerlands',
@@ -60,7 +60,7 @@ export const regionData: Record<RegionId, RegionInfo> = {
     resources: ['Gold mines', 'Smithies', 'Trade wealth'],
     description: 'A wealthy western power base driven by mines, ports, and heavy industry.',
     tokenPosition: { x: 360, y: 560 },
-    neighbors: ['riverlands', 'reach', 'iron_islands'],
+    neighbors: ['riverlands', 'reach'],
   },
   reach: {
     name: 'The Reach',
@@ -75,8 +75,8 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   stormlands: {
     name: 'Stormlands',
-    houseId: 'neutral',
-    house: 'Neutral Houses',
+    houseId: 'targaryen',
+    house: 'House Targaryen',
     army: 66,
     defense: 19,
     resources: ['Ship timber', 'Coastal forts', 'War ports'],
@@ -86,25 +86,14 @@ export const regionData: Record<RegionId, RegionInfo> = {
   },
   dorne: {
     name: 'Dorne',
-    houseId: 'neutral',
-    house: 'Neutral Houses',
+    houseId: 'tyrell',
+    house: 'House Tyrell',
     army: 58,
     defense: 17,
     resources: ['Sunspear trade', 'Spices', 'Desert tactics'],
     description: 'A hot southern dominion known for mobility, attrition warfare, and resilience.',
     tokenPosition: { x: 1030, y: 860 },
     neighbors: ['reach', 'stormlands', 'essos'],
-  },
-  iron_islands: {
-    name: 'Iron Islands',
-    houseId: 'neutral',
-    house: 'Neutral Houses',
-    army: 54,
-    defense: 13,
-    resources: ['Raider fleets', 'Ironworks', 'Naval leverage'],
-    description: 'A maritime stronghold that projects influence through aggressive naval raids.',
-    tokenPosition: { x: 220, y: 360 },
-    neighbors: ['north', 'riverlands', 'westerlands'],
   },
   essos: {
     name: 'Essos',
@@ -115,17 +104,6 @@ export const regionData: Record<RegionId, RegionInfo> = {
     resources: ['City-state alliances', 'Trade routes', 'Mercenary companies'],
     description: 'A vast eastern continent where wealth, fleets, and hired blades shape power.',
     tokenPosition: { x: 1320, y: 520 },
-    neighbors: ['stormlands', 'dorne', 'braavos'],
+    neighbors: ['stormlands', 'dorne'],
   },
-  braavos: {
-    name: 'Braavos',
-    houseId: 'targaryen',
-    house: 'House Targaryen',
-    army: 60,
-    defense: 16,
-    resources: ['Banking power', 'Mercenaries', 'Sea commerce'],
-    description: 'A wealthy eastern city-state whose coin and contracts can shape entire wars.',
-    tokenPosition: { x: 1330, y: 700 },
-    neighbors: ['vale', 'essos'],
-  },
-}
+} as Record<RegionId, RegionInfo>
