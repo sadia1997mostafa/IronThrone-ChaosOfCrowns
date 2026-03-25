@@ -275,4 +275,4 @@ export default function BattleSkirmish3D({
 useGLTF.preload('/models/epic_black_golden_cyber_warrior.glb')
 useGLTF.preload('/models/sword1.glb')
 useGLTF.preload('/models/sword2.glb')
-useGLTF.preload('/models/game_of_thrones_wildlings_dagger.glb')
+useGLTF.preload('/models/sword1.glb')

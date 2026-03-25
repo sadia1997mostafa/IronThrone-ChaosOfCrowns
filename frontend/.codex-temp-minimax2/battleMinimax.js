@@ -10,6 +10,7 @@ exports.chooseBestMove = chooseBestMove;
 exports.runBattleMinimaxDemo = runBattleMinimaxDemo;
 exports.BATTLE_LOSS_PERCENT = 50;
 const MAX_BATTLE_TURNS_SAFETY = 20;
+const MIN_TURN_NUMBER_FOR_WITHDRAW = 3;
 const WITHDRAW_LOSS_PERCENT = 0.05;
 const CRITICAL_ARMY_PENALTY = 30;
 const VOLUNTARY_WITHDRAW_PENALTY = 5;
@@ -21,6 +22,12 @@ var BattleAction;
     BattleAction["Withdraw"] = "Withdraw";
 })(BattleAction || (exports.BattleAction = BattleAction = {}));
 const ALL_ACTIONS = [BattleAction.Attack, BattleAction.Guard, BattleAction.Withdraw];
+function legalActionsForState(state) {
+    if (state.turn_number < MIN_TURN_NUMBER_FOR_WITHDRAW) {
+        return [BattleAction.Attack, BattleAction.Guard];
+    }
+    return ALL_ACTIONS;
+}
 function createBattleState(input) {
     var _a, _b;
     return {
@@ -240,7 +247,7 @@ function minimax(state, depth = 0) {
         let bestTerminalState = null;
         const trace = [`${indent}Max node starts with ${describeState(state)}`];
         const children = [];
-        for (const action of ALL_ACTIONS) {
+        for (const action of legalActionsForState(state)) {
             trace.push(`${indent}${depth === 0 ? 'Root action' : 'Max considers'}: ${action}`);
             let nextState;
             if (action === BattleAction.Withdraw) {
@@ -297,7 +304,7 @@ function minimax(state, depth = 0) {
     let bestAction = null;
     let bestTerminalState = null;
     const children = [];
-    for (const defenderAction of ALL_ACTIONS) {
+    for (const defenderAction of legalActionsForState(state)) {
         trace.push(`${indent}Opponent reply: ${defenderAction}`);
         const nextState = defenderAction === BattleAction.Withdraw
             ? applyActionPair(state, attackerAction !== null && attackerAction !== void 0 ? attackerAction : BattleAction.Attack, BattleAction.Withdraw)
@@ -365,7 +372,7 @@ function buildDemoBlock(title, state) {
 }
 function summarizeRootActions(state) {
     const rootState = { ...state, current_turn_player: 'max', pending_attacker_action: null };
-    return ALL_ACTIONS.map((action) => {
+    return legalActionsForState(rootState).map((action) => {
         if (action === BattleAction.Withdraw) {
             return {
                 action,

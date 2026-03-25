@@ -14,11 +14,10 @@ import FloatingStatText from './FloatingStatText'
 import UnitToken from './UnitToken'
 import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
-import { resolveBattle as calculateBattleResolution } from '@/lib/helpers/battleResolution'
 import { pickAIDecision, previewFuzzyInputs } from '@/lib/ai/aiController'
 import type { AIDecisionTrace, FuzzyStrategicOutput } from '@/lib/ai/types'
 import { createInitialDiplomacy, PLAYABLE_HOUSES, type DiplomacyMatrix, type RelationState } from '@/lib/helpers/diplomacy'
-import { BATTLE_LOSS_PERCENT, BattleAction, chooseBestMove, createBattleState } from '@/lib/minimax/battleMinimax'
+import { BATTLE_LOSS_PERCENT, BattleAction, chooseBestMove, createBattleState, type BattleState } from '@/lib/minimax/battleMinimax'
 
 const VIEW_BOX = '0 0 1536 1024'
 const regionOrder: RegionId[] = [
@@ -40,35 +39,35 @@ const HOUSE_META: Record<HouseId, { label: string; color: string; glyph: string;
   stark: {
     label: 'House Stark',
     color: '#7dc4ff',
-    glyph: '🐺',
+    glyph: 'ðŸº',
     unitImage: '/images/houses/stark/unit.png',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
   lannister: {
     label: 'House Lannister',
     color: '#ff9d67',
-    glyph: '🦁',
+    glyph: 'ðŸ¦',
     unitImage: '/images/houses/lannister/unit.png',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
   targaryen: {
     label: 'House Targaryen',
     color: '#ff6f6f',
-    glyph: '🐉',
+    glyph: 'ðŸ‰',
     unitImage: '/images/houses/targaryen/unit.png',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
   tyrell: {
     label: 'House Tyrell',
     color: '#a5de8b',
-    glyph: '🌿',
+    glyph: 'ðŸŒ¿',
     unitImage: '/images/houses/tyrell/unit.png',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
   neutral: {
     label: 'Neutral Houses',
     color: '#c6ab85',
-    glyph: '⚜',
+    glyph: 'âšœ',
     unitModel: '/models/epic_black_golden_cyber_warrior.glb',
   },
 }
@@ -85,11 +84,13 @@ type BattleContext = {
   attackerId: RegionId
   defenderId: RegionId
   winChance: number
-  randomBonus: number
+  projectedScore: number
+  projectedBestAction: BattleAction | null
+  finalState: BattleState
 }
 
 type BattlePhase = 'idle' | 'targeting' | 'march' | 'impact' | 'briefing'
-type DecisionAction = 'attack' | 'defend' | 'hold' | 'reinforce' | 'fortify' | 'recruit' | 'gather'
+type DecisionAction = 'attack' | 'defend' | 'guard' | 'withdraw' | 'hold' | 'reinforce' | 'fortify' | 'recruit' | 'gather'
 
 type ActionCue = {
   id: number
@@ -101,19 +102,42 @@ type ActionCue = {
   message: string
 }
 
+type BattleStepSummary = {
+  round: number
+  attackerAction: BattleAction | null
+  defenderAction: BattleAction | null
+  attackerArmyBefore: number
+  defenderArmyBefore: number
+  attackerArmyAfter: number | null
+  defenderArmyAfter: number | null
+  resolutionText: string
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-const AUTO_SIMULATION_STEP_MS = 1700
-const AUTO_SIMULATION_BATTLE_PAUSE_MS = 900
-const AUTO_SIMULATION_RESULT_PAUSE_MS = 1100
-const DEMO_TURN_LIMIT = 8
-const DECISION_STEP_DELAY_MS = 1800
-const DECISION_FINAL_DELAY_MS = 2600
+const AUTO_SIMULATION_STEP_MS = 1150
+const AUTO_SIMULATION_BATTLE_PAUSE_MS = 650
+const AUTO_SIMULATION_RESULT_PAUSE_MS = 760
+const DECISION_STEP_DELAY_MS = 1300
+const DECISION_FINAL_DELAY_MS = 1700
+const AUTO_DECISION_STEP_DELAY_MS = 650
+const AUTO_DECISION_FINAL_DELAY_MS = 900
+const AUTO_ATTACK_CINEMATIC_SCALE = 0.55
+const BATTLE_WINNER_BANNER_MS = 2200
+const SIMULATION_RESUME_BANNER_MS = 1200
 const LEARNING_MODE_SIMPLE = true
+const AI_DEFEND_DEFENSE_BONUS = 2
+const AI_REINFORCE_GOLD_COST = 20
+const AI_REINFORCE_ARMY_BONUS = 10
+const AI_HOLD_ARMY_BONUS = 4
+const AI_HOLD_GOLD_BONUS = 10
+const AI_HOLD_FOOD_BONUS = 12
+const AI_HOLD_INFLUENCE_BONUS = 4
+const AI_CAPTURE_GARRISON_SHARE = 0.6
 
 const SKIRMISH_WEAPONS = {
   attackerSword: '/models/sword1.glb',
   defenderSword: '/models/sword2.glb',
-  dagger: '/models/game_of_thrones_wildlings_dagger.glb',
+  dagger: '/models/sword1.glb',
 } as const
 
 export default function GOTMap() {
@@ -147,13 +171,15 @@ export default function GOTMap() {
     targaryen: { gold: 250, food: 230, influence: 145 },
   })
   const [diplomacy, setDiplomacy] = useState<DiplomacyMatrix>(() => createInitialDiplomacy())
-  const [turnBanner, setTurnBanner] = useState<string>('Turn 1 • House Stark')
+  const [turnBanner, setTurnBanner] = useState<string>('Turn 1 â€¢ House Stark')
   const [hasActedThisTurn, setHasActedThisTurn] = useState(false)
   const [aiReason, setAiReason] = useState<string | null>(null)
   const [aiFuzzy, setAiFuzzy] = useState<FuzzyStrategicOutput | null>(null)
   const [aiTree, setAiTree] = useState<AIDecisionTreeSnapshot | null>(null)
   const [aiBattleTree, setAiBattleTree] = useState<AIBattleTreeSnapshot | null>(null)
   const [battleMinimaxPopupOpen, setBattleMinimaxPopupOpen] = useState(false)
+  const [battlePlaybackPath, setBattlePlaybackPath] = useState<number[] | null>(null)
+  const [battleStepSummary, setBattleStepSummary] = useState<BattleStepSummary | null>(null)
   const [aiSimulationNote, setAiSimulationNote] = useState<string | null>(null)
   const [decisionPopupOpen, setDecisionPopupOpen] = useState(false)
   const [decisionPopupStep, setDecisionPopupStep] = useState(0)
@@ -162,14 +188,16 @@ export default function GOTMap() {
   const [decisionPopupHouseLabel, setDecisionPopupHouseLabel] = useState<string>('')
   const [decisionPopupPaused, setDecisionPopupPaused] = useState(false)
   const [isAutoSimulating, setIsAutoSimulating] = useState(false)
-  const [winnerHouse, setWinnerHouse] = useState<PlayableHouseId | null>(null)
-  const [winnerReason, setWinnerReason] = useState<string | null>(null)
+  const [hasSimulationStarted, setHasSimulationStarted] = useState(false)
+  const [isSimulationSequenceBusy, setIsSimulationSequenceBusy] = useState(false)
   const [actionCue, setActionCue] = useState<ActionCue | null>(null)
   const floatingIdRef = useRef(0)
   const actionCueIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const decisionPopupPausedRef = useRef(false)
   const decisionVisualizationRunRef = useRef(0)
+  const isAutoSimulatingRef = useRef(false)
+  const pendingAutoBattleResumeRef = useRef<(() => void) | null>(null)
 
   const activeResources = resourcesByHouse[currentFaction]
 
@@ -195,6 +223,56 @@ export default function GOTMap() {
 
     return counts
   }, [availableRegions, regions])
+
+  const totalArmyByHouse = useMemo(() => {
+    const totals: Record<PlayableHouseId, number> = {
+      stark: 0,
+      lannister: 0,
+      tyrell: 0,
+      targaryen: 0,
+    }
+
+    for (const regionId of availableRegions) {
+      const owner = regions[regionId].houseId
+      if (owner !== 'neutral') {
+        totals[owner] += regions[regionId].army
+      }
+    }
+
+    return totals
+  }, [availableRegions, regions])
+
+  const leaderBoard = useMemo(() => {
+    const standings = PLAYABLE_HOUSES.map((houseId) => ({
+      houseId,
+      regions: territoryCounts[houseId],
+      army: totalArmyByHouse[houseId],
+      gold: resourcesByHouse[houseId].gold,
+    })).sort((a, b) => b.regions - a.regions || b.army - a.army || b.gold - a.gold)
+
+    const first = standings[0]
+    const second = standings[1]
+    const isExactTie =
+      Boolean(first && second) &&
+      first.regions === second.regions &&
+      first.army === second.army &&
+      first.gold === second.gold
+
+    return {
+      standings,
+      leaderHouse: isExactTie ? null : first?.houseId ?? null,
+      leaderReason: isExactTie
+        ? `Tie at ${first?.regions ?? 0} regions, ${first?.army ?? 0} army, and ${first?.gold ?? 0} gold.`
+        : first
+          ? `${HOUSE_META[first.houseId].label} leads with ${first.regions} regions, ${first.army} total army, and ${first.gold} gold.`
+          : null,
+    }
+  }, [resourcesByHouse, territoryCounts, totalArmyByHouse])
+
+  const fullControlWinner = useMemo(
+    () => PLAYABLE_HOUSES.find((house) => territoryCounts[house] === availableRegions.length) ?? null,
+    [availableRegions.length, territoryCounts]
+  )
 
   const currentFuzzyInputs = useMemo(
     () =>
@@ -252,6 +330,10 @@ export default function GOTMap() {
     decisionPopupPausedRef.current = decisionPopupPaused
   }, [decisionPopupPaused])
 
+  useEffect(() => {
+    isAutoSimulatingRef.current = isAutoSimulating
+  }, [isAutoSimulating])
+
   const closeDecisionPopup = () => {
     decisionVisualizationRunRef.current += 1
     decisionPopupPausedRef.current = false
@@ -259,13 +341,19 @@ export default function GOTMap() {
     setDecisionPopupOpen(false)
   }
 
-  const waitForVisualizationStep = async (ms: number, runId: number) => {
+  useEffect(() => {
+    if (simulationPhase === 'battle' && decisionPopupOpen) {
+      closeDecisionPopup()
+    }
+  }, [simulationPhase, decisionPopupOpen])
+
+  const waitForVisualizationStep = async (ms: number, runId: number, respectSimulationPause = false) => {
     let elapsed = 0
 
     while (elapsed < ms) {
       if (decisionVisualizationRunRef.current !== runId) return false
 
-      if (decisionPopupPausedRef.current) {
+      if (decisionPopupPausedRef.current || (respectSimulationPause && !isAutoSimulatingRef.current)) {
         await wait(120)
         continue
       }
@@ -278,9 +366,58 @@ export default function GOTMap() {
     return decisionVisualizationRunRef.current === runId
   }
 
-  const runDecisionVisualization = async (trace: AIDecisionTrace, reason: string) => {
+  const waitForSimulationProgress = async (ms: number) => {
+    let elapsed = 0
+
+    while (elapsed < ms) {
+      if (!isAutoSimulatingRef.current) {
+        await wait(120)
+        continue
+      }
+
+      const slice = Math.min(120, ms - elapsed)
+      await wait(slice)
+      elapsed += slice
+    }
+  }
+
+  const waitForAutoBattleResume = () =>
+    new Promise<void>((resolve) => {
+      pendingAutoBattleResumeRef.current = () => {
+        pendingAutoBattleResumeRef.current = null
+        resolve()
+      }
+    })
+
+  const announceBanner = async (message: string, duration: number) => {
+    setTurnBanner(message)
+    await waitForSimulationProgress(duration)
+    setTurnBanner((current) => (current === message ? '' : current))
+  }
+
+  const parseBattleStateSummary = (summary: string) => {
+    const attackerArmy = Number(summary.match(/attacker_army=(\d+)/)?.[1] ?? NaN)
+    const defenderArmy = Number(summary.match(/defender_army=(\d+)/)?.[1] ?? NaN)
+    const regionOwner = summary.match(/region_owner=([^,]+)/)?.[1] ?? ''
+    const turnNumber = Number(summary.match(/turn=(\d+)/)?.[1] ?? NaN)
+
+    if (Number.isNaN(attackerArmy) || Number.isNaN(defenderArmy) || Number.isNaN(turnNumber)) {
+      return null
+    }
+
+    return {
+      attackerArmy,
+      defenderArmy,
+      regionOwner,
+      turnNumber,
+    }
+  }
+
+  const runDecisionVisualization = async (trace: AIDecisionTrace, reason: string, fastMode = false) => {
     const totalSteps = trace.ruleCalculations.length + 4
     const runId = decisionVisualizationRunRef.current + 1
+    const stepDelay = fastMode ? AUTO_DECISION_STEP_DELAY_MS : DECISION_STEP_DELAY_MS
+    const finalDelay = fastMode ? AUTO_DECISION_FINAL_DELAY_MS : DECISION_FINAL_DELAY_MS
     decisionVisualizationRunRef.current = runId
     setDecisionPopupHouseLabel(HOUSE_META[currentFaction].label)
     setDecisionPopupTrace(trace)
@@ -294,10 +431,15 @@ export default function GOTMap() {
       if (decisionVisualizationRunRef.current !== runId) return
       setDecisionPopupStep(step)
       const keepGoing = await waitForVisualizationStep(
-        step === totalSteps - 1 ? DECISION_FINAL_DELAY_MS : DECISION_STEP_DELAY_MS,
-        runId
+        step === totalSteps - 1 ? finalDelay : stepDelay,
+        runId,
+        fastMode
       )
       if (!keepGoing) return
+    }
+
+    if (fastMode && decisionVisualizationRunRef.current === runId) {
+      setDecisionPopupOpen(false)
     }
   }
 
@@ -339,7 +481,7 @@ export default function GOTMap() {
     }
   }
 
-  const buildBattleTreeSnapshot = (sourceId: RegionId, targetId: RegionId): AIBattleTreeSnapshot => {
+  const evaluateMinimaxBattle = (sourceId: RegionId, targetId: RegionId) => {
     const attacker = regions[sourceId]
     const defender = regions[targetId]
     const battleState = createBattleState({
@@ -352,6 +494,8 @@ export default function GOTMap() {
     const result = chooseBestMove(battleState)
 
     return {
+      result,
+      snapshot: {
       attackerName: attacker.house,
       defenderName: defender.house,
       sourceRegionName: attacker.name,
@@ -369,13 +513,14 @@ export default function GOTMap() {
       }),
       debugOutput: result.debugOutput,
       tree: result.tree,
+      },
     }
   }
 
   const runDirectMinimaxDemo = () => {
     const sourceId: RegionId = 'essos'
     const targetId: RegionId = 'westerlands'
-    const snapshot = buildBattleTreeSnapshot(sourceId, targetId)
+    const { snapshot } = evaluateMinimaxBattle(sourceId, targetId)
 
     setAiFuzzy(null)
     setAiTree(null)
@@ -403,59 +548,7 @@ export default function GOTMap() {
       addEvent(`Attack blocked: ${regions[targetId].name} is not a valid hostile neighbor.`)
       return
     }
-
-    const attacker = regions[sourceId]
-    const defender = regions[targetId]
-    triggerActionCue({
-      action: 'attack',
-      houseId: attacker.houseId,
-      houseLabel: attacker.house,
-      primaryRegionId: sourceId,
-      targetRegionId: targetId,
-      message: `${attacker.house} attacks ${defender.name}`,
-    })
-    const outcome = calculateBattleResolution({
-      attackerArmy: attacker.army,
-      defenderArmy: defender.army,
-      defenderDefense: defender.defense,
-    })
-
-    setHasActedThisTurn(true)
-    setSimulationPhase('ending')
-    await wait(AUTO_SIMULATION_BATTLE_PAUSE_MS)
-
-    if (outcome.attackerWins) {
-      setRegions((prev) => ({
-        ...prev,
-        [sourceId]: {
-          ...prev[sourceId],
-          army: outcome.attackerAfter,
-        },
-        [targetId]: {
-          ...prev[targetId],
-          army: outcome.defenderAfter,
-          houseId: prev[sourceId].houseId,
-          house: prev[sourceId].house,
-        },
-      }))
-      addEvent(`${attacker.house} captures ${defender.name}.`)
-      await wait(AUTO_SIMULATION_BATTLE_PAUSE_MS)
-      return
-    }
-
-    setRegions((prev) => ({
-      ...prev,
-      [sourceId]: {
-        ...prev[sourceId],
-        army: outcome.attackerAfter,
-      },
-      [targetId]: {
-        ...prev[targetId],
-        army: outcome.defenderAfter,
-      },
-    }))
-    addEvent(`${defender.house} holds ${defender.name} after ${attacker.house} assault.`)
-    await wait(AUTO_SIMULATION_BATTLE_PAUSE_MS)
+    await resolveMinimaxBattle(sourceId, targetId, true)
   }
 
   const updateCurrentResources = (delta: Partial<{ gold: number; food: number; influence: number }>) => {
@@ -498,6 +591,36 @@ export default function GOTMap() {
     }, 1700)
   }
 
+  const animateBattleArmies = async (
+    sourceId: RegionId,
+    targetId: RegionId,
+    fromAttacker: number,
+    fromDefender: number,
+    toAttacker: number,
+    toDefender: number
+  ) => {
+    const steps = 6
+
+    for (let step = 1; step <= steps; step += 1) {
+      const nextAttacker = Math.round(fromAttacker + ((toAttacker - fromAttacker) * step) / steps)
+      const nextDefender = Math.round(fromDefender + ((toDefender - fromDefender) * step) / steps)
+
+      setRegions((prev) => ({
+        ...prev,
+        [sourceId]: {
+          ...prev[sourceId],
+          army: nextAttacker,
+        },
+        [targetId]: {
+          ...prev[targetId],
+          army: nextDefender,
+        },
+      }))
+
+      await waitForSimulationProgress(90)
+    }
+  }
+
   const clearBattleVisuals = () => {
     setBattlePath(null)
     setClashRegion(null)
@@ -505,6 +628,7 @@ export default function GOTMap() {
     setBattlePhase('idle')
     setImpactSlowMo(false)
     setAttackSource(null)
+    setBattleStepSummary(null)
   }
 
   const getAudioCtx = () => {
@@ -580,7 +704,7 @@ export default function GOTMap() {
     clearBattleVisuals()
   }
 
-  const launchAttackSequence = async (sourceId: RegionId, targetId: RegionId) => {
+  const launchAttackSequence = async (sourceId: RegionId, targetId: RegionId, fastMode = false, showBattleModal = true) => {
     if (isBattleModalOpen || isResolvingBattle) return
     if (!canAttackTarget(sourceId, targetId)) {
       addEvent(`Attack blocked: ${regions[targetId].name} is not a valid hostile neighbor.`)
@@ -589,20 +713,19 @@ export default function GOTMap() {
 
     const attacker = regions[sourceId]
     const defender = regions[targetId]
-    const preBattle = calculateBattleResolution({
-      attackerArmy: attacker.army,
-      defenderArmy: defender.army,
-      defenderDefense: defender.defense,
-    })
+    const { result, snapshot } = evaluateMinimaxBattle(sourceId, targetId)
 
     setAttackSource(sourceId)
     setSelectedRegion(targetId)
     setBattleResult(null)
+    setAiBattleTree(snapshot)
     setBattleContext({
       attackerId: sourceId,
       defenderId: targetId,
-      winChance: preBattle.winChance,
-      randomBonus: preBattle.randomBonus,
+      winChance: projectBattleConfidence(result.score),
+      projectedScore: result.score,
+      projectedBestAction: result.bestAction,
+      finalState: result.finalState,
     })
     setIsCinematicActive(true)
     setBattlePhase('targeting')
@@ -619,29 +742,50 @@ export default function GOTMap() {
     })
     addEvent(`${attacker.house} attacked ${defender.name}.`)
 
-    await wait(480)
+    const cinematicDelay = (ms: number) => Math.max(100, Math.round(ms * (fastMode ? AUTO_ATTACK_CINEMATIC_SCALE : 1)))
+
+    if (fastMode) {
+      await waitForSimulationProgress(cinematicDelay(480))
+    } else {
+      await wait(cinematicDelay(480))
+    }
     setBattlePhase('march')
     playWarCue('march')
     setBattlePath({ from: sourceId, to: targetId })
 
-    await wait(1680)
+    if (fastMode) {
+      await waitForSimulationProgress(cinematicDelay(1680))
+    } else {
+      await wait(cinematicDelay(1680))
+    }
     setBattlePhase('impact')
     setImpactSlowMo(true)
     playWarCue('impact')
     setClashRegion(targetId)
-    setTimeout(() => setImpactSlowMo(false), 820)
-    await wait(980)
+    setTimeout(() => setImpactSlowMo(false), cinematicDelay(820))
+    if (fastMode) {
+      await waitForSimulationProgress(cinematicDelay(980))
+    } else {
+      await wait(cinematicDelay(980))
+    }
     setBattlePhase('briefing')
-    await wait(260)
-    setIsBattleModalOpen(true)
+    if (fastMode) {
+      await waitForSimulationProgress(cinematicDelay(260))
+    } else {
+      await wait(cinematicDelay(260))
+    }
+    setIsBattleModalOpen(showBattleModal)
   }
 
   const runAutoCinematicAttack = async (sourceId: RegionId, targetId: RegionId) => {
     setAttackSource(sourceId)
-    await launchAttackSequence(sourceId, targetId)
-    await wait(220)
-    await resolveBattle()
-    await wait(AUTO_SIMULATION_RESULT_PAUSE_MS)
+    await launchAttackSequence(sourceId, targetId, true, false)
+    setDecisionPopupOpen(false)
+    await wait(80)
+    const winnerMessage = await runAutoMinimaxBattlePlayback(sourceId, targetId)
+    await announceBanner(winnerMessage, BATTLE_WINNER_BANNER_MS)
+    await announceBanner('Simulation resumes...', SIMULATION_RESUME_BANNER_MS)
+    await waitForSimulationProgress(AUTO_SIMULATION_RESULT_PAUSE_MS)
     closeBattleModal()
   }
 
@@ -737,7 +881,7 @@ export default function GOTMap() {
   }
 
   const handleReinforceIntent = (regionId: RegionId | null) => {
-    const reinforceCost = 20
+    const reinforceCost = AI_REINFORCE_GOLD_COST
     if (!regionId) {
       setHasActedThisTurn(true)
       setSimulationPhase('ending')
@@ -763,10 +907,310 @@ export default function GOTMap() {
     addEvent(`${HOUSE_META[currentFaction].label} reinforces ${regions[regionId].name}: -${reinforceCost} Gold.`)
   }
 
+  const resolveAIReinforce = (regionId: RegionId | null) => {
+    if (!regionId) {
+      setHasActedThisTurn(true)
+      setSimulationPhase('ending')
+      setAiSimulationNote('Reinforce was chosen, but no focus region was available.')
+      addEvent('Reinforce skipped because no focus region was available.')
+      return
+    }
+
+    setResourcesByHouse((prev) => ({
+      ...prev,
+      [currentFaction]: {
+        ...prev[currentFaction],
+        gold: Math.max(0, prev[currentFaction].gold - AI_REINFORCE_GOLD_COST),
+      },
+    }))
+
+    setRegions((prev) => ({
+      ...prev,
+      [regionId]: {
+        ...prev[regionId],
+        army: prev[regionId].army + AI_REINFORCE_ARMY_BONUS,
+      },
+    }))
+
+    const pos = regions[regionId].tokenPosition
+    addFloatingText(pos.x, pos.y, `+${AI_REINFORCE_ARMY_BONUS} Army`, 'positive')
+    addFloatingText(pos.x + 16, pos.y - 16, `-${AI_REINFORCE_GOLD_COST} Gold`, 'negative')
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+    setAiSimulationNote(
+      `Reinforce executed: ${regions[regionId].name} gains ${AI_REINFORCE_ARMY_BONUS} army for ${AI_REINFORCE_GOLD_COST} gold.`
+    )
+    addEvent(
+      `${HOUSE_META[currentFaction].label} reinforces ${regions[regionId].name}: +${AI_REINFORCE_ARMY_BONUS} Army, -${AI_REINFORCE_GOLD_COST} Gold.`
+    )
+  }
+
+  const resolveAIDefend = (regionId: RegionId | null) => {
+    if (!regionId) {
+      setHasActedThisTurn(true)
+      setSimulationPhase('ending')
+      setAiSimulationNote('Defend was chosen, but no focus region was available.')
+      addEvent('Defend skipped because no focus region was available.')
+      return
+    }
+
+    setRegions((prev) => ({
+      ...prev,
+      [regionId]: {
+        ...prev[regionId],
+        defense: prev[regionId].defense + AI_DEFEND_DEFENSE_BONUS,
+      },
+    }))
+
+    const pos = regions[regionId].tokenPosition
+    addFloatingText(pos.x, pos.y, `+${AI_DEFEND_DEFENSE_BONUS} Defense`, 'neutral')
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+    setAiSimulationNote(`Defend executed: ${regions[regionId].name} gains +${AI_DEFEND_DEFENSE_BONUS} defense this turn.`)
+    addEvent(`${HOUSE_META[currentFaction].label} fortifies ${regions[regionId].name} and raises its defense.`)
+  }
+
+  const resolveAIHold = (regionId: RegionId | null) => {
+    const fallbackRegionId = availableRegions.find((rid) => regions[rid].houseId === currentFaction) ?? null
+    const targetRegionId = regionId ?? fallbackRegionId
+
+    updateCurrentResources({
+      gold: AI_HOLD_GOLD_BONUS,
+      food: AI_HOLD_FOOD_BONUS,
+      influence: AI_HOLD_INFLUENCE_BONUS,
+    })
+
+    if (targetRegionId) {
+      setRegions((prev) => ({
+        ...prev,
+        [targetRegionId]: {
+          ...prev[targetRegionId],
+          army: prev[targetRegionId].army + AI_HOLD_ARMY_BONUS,
+        },
+      }))
+
+      const pos = regions[targetRegionId].tokenPosition
+      addFloatingText(pos.x, pos.y, `+${AI_HOLD_ARMY_BONUS} Army`, 'positive')
+      addFloatingText(pos.x + 16, pos.y - 14, `+${AI_HOLD_GOLD_BONUS} Gold`, 'positive')
+      addFloatingText(pos.x - 12, pos.y - 20, 'Hold', 'neutral')
+      setSelectedRegion(targetRegionId)
+      setAiSimulationNote(
+        `Hold executed: ${regions[targetRegionId].name} consolidates with +${AI_HOLD_ARMY_BONUS} army and the house gathers resources.`
+      )
+      addEvent(
+        `${HOUSE_META[currentFaction].label} holds ${regions[targetRegionId].name}: +${AI_HOLD_ARMY_BONUS} Army, +${AI_HOLD_GOLD_BONUS} Gold.`
+      )
+    } else {
+      setAiSimulationNote(
+        `${HOUSE_META[currentFaction].label} holds position and gathers resources for a stronger future turn.`
+      )
+      addEvent(`${HOUSE_META[currentFaction].label} holds position: +${AI_HOLD_GOLD_BONUS} Gold gathered.`)
+    }
+
+    setHasActedThisTurn(true)
+    setSimulationPhase('ending')
+  }
+
+  const applyMinimaxBattleResult = (
+    sourceId: RegionId,
+    targetId: RegionId,
+    finalState: BattleState,
+    attackerHouseId: HouseId,
+    attackerHouseLabel: string,
+    defenderHouseLabel: string
+  ) => {
+    const attackerWon = finalState.region_owner === attackerHouseLabel
+    const occupyingArmy = attackerWon
+      ? Math.min(finalState.attacker_army, Math.max(1, Math.round(finalState.attacker_army * AI_CAPTURE_GARRISON_SHARE)))
+      : finalState.defender_army
+    const returningArmy = attackerWon ? Math.max(0, finalState.attacker_army - occupyingArmy) : finalState.attacker_army
+
+    setRegions((prev) => ({
+      ...prev,
+      [sourceId]: {
+        ...prev[sourceId],
+        army: returningArmy,
+      },
+      [targetId]: {
+        ...prev[targetId],
+        army: occupyingArmy,
+        houseId: attackerWon ? attackerHouseId : prev[targetId].houseId,
+        house: attackerWon ? attackerHouseLabel : prev[targetId].house,
+      },
+    }))
+
+    const sourcePos = regions[sourceId].tokenPosition
+    const targetPos = regions[targetId].tokenPosition
+    addFloatingText(sourcePos.x, sourcePos.y, `${returningArmy} Return`, attackerWon ? 'neutral' : 'negative')
+    addFloatingText(targetPos.x, targetPos.y, attackerWon ? `${occupyingArmy} Occupy` : `${occupyingArmy} Hold`, attackerWon ? 'positive' : 'neutral')
+
+    setSimulationPhase('ending')
+    setAiSimulationNote(
+      attackerWon
+        ? `Battle executed with minimax. ${attackerHouseLabel} captures ${regions[targetId].name} after optimal battle play.`
+        : `Battle executed with minimax. ${defenderHouseLabel} holds ${regions[targetId].name} after optimal battle play.`
+    )
+    addEvent(
+      attackerWon
+        ? `${attackerHouseLabel} captures ${regions[targetId].name} by minimax battle resolution.`
+        : `${defenderHouseLabel} holds ${regions[targetId].name} after minimax battle resolution.`
+    )
+  }
+
+  const resolveMinimaxBattle = async (sourceId: RegionId, targetId: RegionId, autoMode = false) => {
+    const attacker = regions[sourceId]
+    const defender = regions[targetId]
+    const { result, snapshot } = evaluateMinimaxBattle(sourceId, targetId)
+
+    setAiBattleTree(snapshot)
+    setBattleMinimaxPopupOpen(true)
+    setSelectedRegion(targetId)
+    setAttackSource(sourceId)
+    setHasActedThisTurn(true)
+    setSimulationPhase('battle')
+
+    triggerActionCue({
+      action: 'attack',
+      houseId: attacker.houseId,
+      houseLabel: attacker.house,
+      primaryRegionId: sourceId,
+      targetRegionId: targetId,
+      message: `${attacker.house} attacks ${defender.name}`,
+    })
+
+    addEvent(
+      `${attacker.house} attacks ${defender.name}. Minimax chooses ${result.bestAction} and projects final score ${result.score}.`
+    )
+
+    await wait(autoMode ? AUTO_SIMULATION_BATTLE_PAUSE_MS / 2 : AUTO_SIMULATION_BATTLE_PAUSE_MS)
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.house)
+  }
+
+  const runAutoMinimaxBattlePlayback = async (sourceId: RegionId, targetId: RegionId) => {
+    const attacker = regions[sourceId]
+    const defender = regions[targetId]
+    const { result, snapshot } = evaluateMinimaxBattle(sourceId, targetId)
+    let node = result.tree
+    let path: number[] = []
+    let currentAttackerArmy = attacker.army
+    let currentDefenderArmy = defender.army
+    let currentRound = 1
+    let pendingAttackerAction: BattleAction | null = null
+
+    setAiBattleTree(snapshot)
+    setAiSimulationNote(`${attacker.house} begins minimax battle planning against ${defender.house}.`)
+
+    while (node.children.length > 0) {
+      const chosenIndex = node.children.findIndex((child) => child.chosen)
+      if (chosenIndex < 0) break
+
+      const chosenChild = node.children[chosenIndex]
+      const actingHouse = node.nodeType === 'max' ? attacker.house : defender.house
+      const parsed = parseBattleStateSummary(chosenChild.next.stateSummary)
+      const actionCueType: DecisionAction =
+        chosenChild.action === BattleAction.Attack
+          ? 'attack'
+          : chosenChild.action === BattleAction.Guard
+            ? 'guard'
+            : 'withdraw'
+
+      setBattlePlaybackPath(path)
+      setBattleMinimaxPopupOpen(true)
+      setAiSimulationNote(`${actingHouse} chooses ${chosenChild.action}.`)
+      addEvent(`${actingHouse} chooses ${chosenChild.action}.`)
+      if (node.nodeType === 'max') {
+        pendingAttackerAction = chosenChild.action
+        setBattleStepSummary({
+          round: currentRound,
+          attackerAction: chosenChild.action,
+          defenderAction: null,
+          attackerArmyBefore: currentAttackerArmy,
+          defenderArmyBefore: currentDefenderArmy,
+          attackerArmyAfter: null,
+          defenderArmyAfter: null,
+          resolutionText: `${attacker.house} is committing to ${chosenChild.action}. ${defender.house} will answer next.`,
+        })
+      }
+      await waitForSimulationProgress(1200)
+      setBattleMinimaxPopupOpen(false)
+
+      triggerActionCue({
+        action: actionCueType,
+        houseId: node.nodeType === 'max' ? attacker.houseId : defender.houseId,
+        houseLabel: actingHouse,
+        primaryRegionId: node.nodeType === 'max' ? sourceId : targetId,
+        targetRegionId: chosenChild.action === BattleAction.Attack ? (node.nodeType === 'max' ? targetId : sourceId) : undefined,
+        message: `${actingHouse} chooses ${chosenChild.action}`,
+      })
+
+      if (chosenChild.action === BattleAction.Attack) {
+        setClashRegion(targetId)
+        playWarCue('impact')
+        addFloatingText(regions[node.nodeType === 'max' ? sourceId : targetId].tokenPosition.x, regions[node.nodeType === 'max' ? sourceId : targetId].tokenPosition.y, 'Attack', 'negative')
+        addFloatingText(regions[node.nodeType === 'max' ? targetId : sourceId].tokenPosition.x, regions[node.nodeType === 'max' ? targetId : sourceId].tokenPosition.y, 'Clash', 'negative')
+      } else if (chosenChild.action === BattleAction.Guard) {
+        addFloatingText(regions[node.nodeType === 'max' ? sourceId : targetId].tokenPosition.x, regions[node.nodeType === 'max' ? sourceId : targetId].tokenPosition.y, 'Guard', 'neutral')
+      } else {
+        addFloatingText(
+          node.nodeType === 'max' ? regions[sourceId].tokenPosition.x : regions[targetId].tokenPosition.x,
+          node.nodeType === 'max' ? regions[sourceId].tokenPosition.y : regions[targetId].tokenPosition.y,
+          'Withdraw',
+          'neutral'
+        )
+      }
+
+      path = [...path, chosenIndex]
+      setBattlePlaybackPath(path)
+
+      if (node.nodeType === 'min' && parsed) {
+        setBattleStepSummary({
+          round: currentRound,
+          attackerAction: pendingAttackerAction,
+          defenderAction: chosenChild.action,
+          attackerArmyBefore: currentAttackerArmy,
+          defenderArmyBefore: currentDefenderArmy,
+          attackerArmyAfter: parsed.attackerArmy,
+          defenderArmyAfter: parsed.defenderArmy,
+          resolutionText: `${defender.house} answers with ${chosenChild.action}. The exchange is now resolved.`,
+        })
+        await animateBattleArmies(sourceId, targetId, currentAttackerArmy, currentDefenderArmy, parsed.attackerArmy, parsed.defenderArmy)
+        currentAttackerArmy = parsed.attackerArmy
+        currentDefenderArmy = parsed.defenderArmy
+        currentRound += 1
+        addFloatingText(regions[sourceId].tokenPosition.x, regions[sourceId].tokenPosition.y - 14, `A:${parsed.attackerArmy}`, 'neutral')
+        addFloatingText(regions[targetId].tokenPosition.x, regions[targetId].tokenPosition.y - 14, `D:${parsed.defenderArmy}`, 'neutral')
+        setAiSimulationNote(
+          `${actingHouse} chooses ${chosenChild.action}. Battle state becomes A:${parsed.attackerArmy} D:${parsed.defenderArmy}.`
+        )
+      } else if (parsed) {
+        setAiSimulationNote(`${actingHouse} chooses ${chosenChild.action}. ${node.nodeType === 'max' ? defender.house : attacker.house} must answer next.`)
+      }
+
+      await waitForSimulationProgress(1450)
+      node = chosenChild.next
+
+      if (node.nodeType === 'terminal') {
+        setBattlePlaybackPath(path)
+        setBattleMinimaxPopupOpen(true)
+        setAiSimulationNote(node.title)
+        addEvent(node.title)
+        await waitForSimulationProgress(1700)
+        setBattleMinimaxPopupOpen(false)
+      }
+    }
+
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.house)
+    setBattlePlaybackPath(null)
+    setBattleMinimaxPopupOpen(false)
+    return `${result.finalState.region_owner} wins the battle`
+  }
+
+  const projectBattleConfidence = (score: number) => Math.max(0.05, Math.min(0.95, 0.5 + score / 300))
+
   const getHouseOrder = (): PlayableHouseId[] => PLAYABLE_HOUSES
 
   const handleEndTurn = async () => {
-    if (isBattleModalOpen || isResolvingBattle) return
+    if (isBattleModalOpen || isResolvingBattle || isSimulationSequenceBusy) return
 
     const turnOrder = getHouseOrder()
     const currentIndex = turnOrder.indexOf(currentFaction)
@@ -810,98 +1254,107 @@ export default function GOTMap() {
   }
 
   const handleAITakeAction = async (autoMode = false) => {
-    if (isBattleModalOpen || isResolvingBattle || hasActedThisTurn) return
+    if (isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isSimulationSequenceBusy) return
 
-    const decision = pickAIDecision({
-      house: currentFaction,
-      regions,
-      availableRegionIds: availableRegions,
-      diplomacy,
-      resources: resourcesByHouse[currentFaction],
-    })
+    setIsSimulationSequenceBusy(true)
 
-    if (!decision) {
-      addEvent(`${HOUSE_META[currentFaction].label} has no legal AI action.`)
-      setHasActedThisTurn(true)
-      return
-    }
-
-    setAiReason(decision.reason)
-    setAiFuzzy(decision.trace.strategic)
-    setAiTree(buildTreeFromTrace(decision.trace))
-    setAiBattleTree(null)
-    await runDecisionVisualization(decision.trace, decision.reason)
-    addEvent('AI Pipeline: fuzzy inputs -> memberships -> rules -> final action.')
-    addEvent(`AI: ${decision.reason}`)
-    setSelectedRegion(decision.regionId || decision.targetId)
-
-    const cueRegionId = decision.regionId || decision.targetId
-    if (cueRegionId) {
-      const cueMessage =
-        decision.action === 'attack' && decision.targetId
-          ? `${HOUSE_META[currentFaction].label} intends to attack ${regions[decision.targetId].name}`
-          : decision.action === 'defend'
-            ? `${HOUSE_META[currentFaction].label} intends to defend ${regions[cueRegionId].name}`
-            : decision.action === 'reinforce'
-              ? `${HOUSE_META[currentFaction].label} intends to reinforce ${regions[cueRegionId].name}`
-              : `${HOUSE_META[currentFaction].label} holds position in ${regions[cueRegionId].name}`
-
-      triggerActionCue({
-        action: decision.action,
-        houseId: currentFaction,
-        houseLabel: HOUSE_META[currentFaction].label,
-        primaryRegionId: cueRegionId,
-        targetRegionId: decision.targetId || undefined,
-        message: cueMessage,
+    try {
+      const decision = pickAIDecision({
+        house: currentFaction,
+        regions,
+        availableRegionIds: availableRegions,
+        diplomacy,
+        resources: resourcesByHouse[currentFaction],
       })
 
-      const pos = regions[cueRegionId].tokenPosition
-      const floatText =
-        decision.action === 'attack'
-          ? 'Intent: Attack'
-          : decision.action === 'defend'
-            ? 'Intent: Defend'
-            : decision.action === 'reinforce'
-              ? 'Intent: Reinforce'
-              : 'Intent: Hold'
-      addFloatingText(pos.x, pos.y, floatText, 'neutral')
-    }
-
-    setHasActedThisTurn(true)
-    setSimulationPhase('ending')
-
-    if (decision.action === 'attack') {
-      if (decision.trace.attackSourceRegionId && decision.targetId) {
-        setAiBattleTree(buildBattleTreeSnapshot(decision.trace.attackSourceRegionId, decision.targetId))
-        setAiSimulationNote('Fuzzy chose Attack, so the panel now shows the full minimax battle tree for this one-on-one clash. No live battle was executed.')
-        addEvent('Simulation: attack intention recorded. Minimax battle tree generated in the AI panel.')
-      } else {
-        setAiSimulationNote('Attack was selected, but the exact battle pair could not be prepared for the minimax explainer.')
-        addEvent('Simulation: attack intention recorded, but minimax battle tree could not be generated.')
+      if (!decision) {
+        addEvent(`${HOUSE_META[currentFaction].label} has no legal AI action.`)
+        setHasActedThisTurn(true)
+        return
       }
-      return
-    }
 
-    if (decision.action === 'defend') {
-      setAiSimulationNote('Intention simulation only: the house would defend this focus region this turn.')
-      addEvent('Simulation: defend intention recorded only. No defense model executed.')
-      return
-    }
+      setAiReason(decision.reason)
+      setAiFuzzy(decision.trace.strategic)
+      setAiTree(buildTreeFromTrace(decision.trace))
+      setAiBattleTree(null)
+      await runDecisionVisualization(decision.trace, decision.reason, autoMode)
+      addEvent('AI Pipeline: fuzzy inputs -> memberships -> rules -> final action.')
+      addEvent(`AI: ${decision.reason}`)
+      setSelectedRegion(decision.regionId || decision.targetId)
 
-    if (decision.action === 'reinforce') {
-      handleReinforceIntent(decision.regionId)
-      return
-    }
+      const cueRegionId = decision.regionId || decision.targetId
+      if (cueRegionId) {
+        const cueMessage =
+          decision.action === 'attack' && decision.targetId
+            ? `${HOUSE_META[currentFaction].label} intends to attack ${regions[decision.targetId].name}`
+            : decision.action === 'defend'
+              ? `${HOUSE_META[currentFaction].label} intends to defend ${regions[cueRegionId].name}`
+              : decision.action === 'reinforce'
+                ? `${HOUSE_META[currentFaction].label} intends to reinforce ${regions[cueRegionId].name}`
+                : `${HOUSE_META[currentFaction].label} holds position in ${regions[cueRegionId].name}`
 
-    setAiSimulationNote('Intention simulation only: the house holds position and waits for a better opportunity.')
-    addEvent('Simulation: hold intention recorded only. No map state changed.')
+        triggerActionCue({
+          action: decision.action,
+          houseId: currentFaction,
+          houseLabel: HOUSE_META[currentFaction].label,
+          primaryRegionId: cueRegionId,
+          targetRegionId: decision.targetId || undefined,
+          message: cueMessage,
+        })
+
+        const pos = regions[cueRegionId].tokenPosition
+        const floatText =
+          decision.action === 'attack'
+            ? 'Intent: Attack'
+            : decision.action === 'defend'
+              ? 'Intent: Defend'
+              : decision.action === 'reinforce'
+                ? 'Intent: Reinforce'
+                : 'Intent: Hold'
+        addFloatingText(pos.x, pos.y, floatText, 'neutral')
+      }
+
+      if (decision.action === 'attack') {
+        if (decision.trace.attackSourceRegionId && decision.targetId) {
+          if (autoMode) {
+            await runAutoCinematicAttack(decision.trace.attackSourceRegionId, decision.targetId)
+          } else {
+            await resolveMinimaxBattle(decision.trace.attackSourceRegionId, decision.targetId, false)
+          }
+        } else {
+          setHasActedThisTurn(true)
+          setSimulationPhase('ending')
+          setAiSimulationNote('Attack was selected, but the exact battle pair could not be prepared for minimax resolution.')
+          addEvent('Attack was selected, but no valid minimax battle pair was available.')
+        }
+        return
+      }
+
+      if (decision.action === 'defend') {
+        resolveAIDefend(decision.regionId)
+        return
+      }
+
+      if (decision.action === 'reinforce') {
+        resolveAIReinforce(decision.regionId)
+        return
+      }
+
+      resolveAIHold(decision.regionId)
+    } finally {
+      setIsSimulationSequenceBusy(false)
+    }
   }
 
   const startAutoSimulation = () => {
-    setWinnerHouse(null)
-    setWinnerReason(null)
+    const isResume = hasSimulationStarted
+    setHasSimulationStarted(true)
     setIsAutoSimulating(true)
-    addEvent('Auto simulation started: AI council now controls all houses.')
+    addEvent(isResume ? 'Auto simulation resumed.' : 'Auto simulation started: AI council now controls all houses.')
+
+    if (pendingAutoBattleResumeRef.current) {
+      pendingAutoBattleResumeRef.current()
+    }
   }
 
   const stopAutoSimulation = () => {
@@ -910,26 +1363,16 @@ export default function GOTMap() {
   }
 
   useEffect(() => {
-    const fullControlHouse = PLAYABLE_HOUSES.find((house) => territoryCounts[house] === availableRegions.length)
-    if (fullControlHouse && !winnerHouse) {
-      setWinnerHouse(fullControlHouse)
-      setWinnerReason(`${HOUSE_META[fullControlHouse].label} controls the entire realm.`)
-      setIsAutoSimulating(false)
-      addEvent(`Victory declared: ${HOUSE_META[fullControlHouse].label} wins the Iron Throne.`)
-    }
-  }, [availableRegions.length, territoryCounts, winnerHouse])
+    if (!fullControlWinner) return
+    setIsAutoSimulating(false)
+    addEvent(`Victory declared: ${HOUSE_META[fullControlWinner].label} controls the entire realm.`)
+  }, [fullControlWinner])
 
   useEffect(() => {
     if (!isAutoSimulating) return
-    if (winnerHouse) return
+    if (fullControlWinner) return
 
-    if (turn >= DEMO_TURN_LIMIT) {
-      setIsAutoSimulating(false)
-      addEvent(`Fuzzy-only demo complete after ${DEMO_TURN_LIMIT} turns. Review the event log and AI panel outputs.`)
-      return
-    }
-
-    if (isBattleModalOpen || isResolvingBattle) return
+    if (isBattleModalOpen || isResolvingBattle || isSimulationSequenceBusy) return
 
     const timer = setTimeout(() => {
       if (!hasActedThisTurn) {
@@ -942,11 +1385,12 @@ export default function GOTMap() {
     return () => clearTimeout(timer)
   }, [
     isAutoSimulating,
-    winnerHouse,
+    fullControlWinner,
     turn,
     hasActedThisTurn,
     isBattleModalOpen,
     isResolvingBattle,
+    isSimulationSequenceBusy,
     currentFaction,
     territoryCounts,
   ])
@@ -955,25 +1399,30 @@ export default function GOTMap() {
     if (!battleContext || isResolvingBattle) return
     const attacker = regions[battleContext.attackerId]
     const defender = regions[battleContext.defenderId]
+    const attackerWon = battleContext.finalState.region_owner === attacker.house
+    const occupyingArmy = attackerWon
+      ? Math.min(
+          battleContext.finalState.attacker_army,
+          Math.max(1, Math.round(battleContext.finalState.attacker_army * AI_CAPTURE_GARRISON_SHARE))
+        )
+      : battleContext.finalState.defender_army
+    const returningArmy = attackerWon
+      ? Math.max(0, battleContext.finalState.attacker_army - occupyingArmy)
+      : battleContext.finalState.attacker_army
 
     setIsResolvingBattle(true)
     await wait(500)
-    const outcome = calculateBattleResolution({
-      attackerArmy: attacker.army,
-      defenderArmy: defender.army,
-      defenderDefense: defender.defense,
-    })
 
-    if (outcome.attackerWins) {
+    if (attackerWon) {
       setRegions((prev) => ({
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: outcome.attackerAfter,
+          army: returningArmy,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: outcome.defenderAfter,
+          army: occupyingArmy,
           houseId: prev[battleContext.attackerId].houseId,
           house: prev[battleContext.attackerId].house,
         },
@@ -981,9 +1430,9 @@ export default function GOTMap() {
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `-${outcome.attackerLoss} Army`, 'negative')
-      addFloatingText(targetPos.x, targetPos.y, 'Captured', 'positive')
-      addEvent(`${defender.name} was captured by ${attacker.house}.`)
+      addFloatingText(sourcePos.x, sourcePos.y, `${returningArmy} Return`, 'neutral')
+      addFloatingText(targetPos.x, targetPos.y, `${occupyingArmy} Occupy`, 'positive')
+      addEvent(`${defender.name} was captured by ${attacker.house} using minimax battle resolution.`)
       setBattleResult(`${attacker.house} captures ${defender.name}`)
       playWarCue('result')
     } else {
@@ -991,19 +1440,19 @@ export default function GOTMap() {
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: outcome.attackerAfter,
+          army: battleContext.finalState.attacker_army,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: outcome.defenderAfter,
+          army: battleContext.finalState.defender_army,
         },
       }))
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `-${outcome.attackerLoss} Army`, 'negative')
-      addFloatingText(targetPos.x, targetPos.y, `-${outcome.defenderLoss} Army`, 'negative')
-      addEvent(`${defender.house} holds ${defender.name} under heavy assault from ${attacker.house}.`)
+      addFloatingText(sourcePos.x, sourcePos.y, `A:${battleContext.finalState.attacker_army}`, 'negative')
+      addFloatingText(targetPos.x, targetPos.y, `D:${battleContext.finalState.defender_army}`, 'neutral')
+      addEvent(`${defender.house} holds ${defender.name} after minimax battle resolution.`)
       setBattleResult(`${defender.house} holds ${defender.name}`)
       playWarCue('result')
     }
@@ -1050,6 +1499,24 @@ export default function GOTMap() {
             <p className="action-cue-eyebrow">{actionCue.houseLabel}</p>
             <p className="action-cue-title">{actionCue.action.toUpperCase()}</p>
             <p className="action-cue-body">{actionCue.message}</p>
+          </div>
+        ) : null}
+        {simulationPhase === 'battle' && battleStepSummary ? (
+          <div className="battle-turn-hud" aria-live="polite">
+            <p className="battle-turn-hud-round">Round {battleStepSummary.round}</p>
+            <p className="battle-turn-hud-line">
+              {regions[attackSource || availableRegions[0]]?.house || 'Attacker'} chose {battleStepSummary.attackerAction ?? 'Waiting'}
+            </p>
+            <p className="battle-turn-hud-line">
+              {selectedRegion ? regions[selectedRegion].house : 'Defender'} chose {battleStepSummary.defenderAction ?? 'Waiting'}
+            </p>
+            <p className="battle-turn-hud-score">
+              {battleStepSummary.attackerArmyBefore}
+              {battleStepSummary.attackerArmyAfter !== null ? ` -> ${battleStepSummary.attackerArmyAfter}` : ''}
+              {' / '}
+              {battleStepSummary.defenderArmyBefore}
+              {battleStepSummary.defenderArmyAfter !== null ? ` -> ${battleStepSummary.defenderArmyAfter}` : ''}
+            </p>
           </div>
         ) : null}
         {isCinematicActive && <div className="map-cinematic-dim" aria-hidden />}
@@ -1175,9 +1642,9 @@ export default function GOTMap() {
             type="button"
             className="panel-btn"
             onClick={isAutoSimulating ? stopAutoSimulation : startAutoSimulation}
-            disabled={Boolean(winnerHouse)}
+            disabled={Boolean(fullControlWinner)}
           >
-            {isAutoSimulating ? 'Pause Simulation' : 'Start Simulation'}
+            {isAutoSimulating ? 'Pause Simulation' : hasSimulationStarted ? 'Resume Simulation' : 'Start Simulation'}
           </button>
           <button
             type="button"
@@ -1189,19 +1656,45 @@ export default function GOTMap() {
           </button>
         </div>
 
-        {winnerHouse ? (
+        {leaderBoard.leaderHouse || leaderBoard.leaderReason ? (
           <div className="winner-banner">
-            <p className="winner-title">Winner: {HOUSE_META[winnerHouse].label}</p>
-            <p className="winner-reason">{winnerReason}</p>
+            <p className="winner-title">
+              {fullControlWinner
+                ? `Winner: ${HOUSE_META[fullControlWinner].label}`
+                : leaderBoard.leaderHouse
+                  ? `Current Leader: ${HOUSE_META[leaderBoard.leaderHouse].label}`
+                  : 'Current Leader: Draw'}
+            </p>
+            <p className="winner-reason">
+              {fullControlWinner
+                ? `${HOUSE_META[fullControlWinner].label} controls the entire realm.`
+                : leaderBoard.leaderReason}
+            </p>
+          </div>
+        ) : null}
+
+        {simulationPhase === 'battle' && battleStepSummary ? (
+          <div className="battle-step-banner">
+            <p className="battle-step-title">Battle Round {battleStepSummary.round}</p>
+            <p className="battle-step-line">
+              Attacker: {battleStepSummary.attackerAction ?? 'Waiting'}
+              {battleStepSummary.defenderAction ? ` | Defender: ${battleStepSummary.defenderAction}` : ' | Defender: deciding...'}
+            </p>
+            <p className="battle-step-line">
+              Army: A {battleStepSummary.attackerArmyBefore}
+              {battleStepSummary.attackerArmyAfter !== null ? ` -> ${battleStepSummary.attackerArmyAfter}` : ''} | D {battleStepSummary.defenderArmyBefore}
+              {battleStepSummary.defenderArmyAfter !== null ? ` -> ${battleStepSummary.defenderArmyAfter}` : ''}
+            </p>
+            <p className="battle-step-reason">{battleStepSummary.resolutionText}</p>
           </div>
         ) : null}
 
         <AIDecisionPanel
           activeHouseLabel={HOUSE_META[currentFaction].label}
           turn={turn}
-          fuzzy={aiFuzzy}
-          tree={aiTree}
-          trace={decisionPopupTrace}
+          fuzzy={simulationPhase === 'battle' ? null : aiFuzzy}
+          tree={simulationPhase === 'battle' ? null : aiTree}
+          trace={simulationPhase === 'battle' ? null : decisionPopupTrace}
           battleTree={aiBattleTree}
           finalReason={aiReason}
           simulationNote={aiSimulationNote}
@@ -1336,6 +1829,8 @@ export default function GOTMap() {
           }}
           defenderDefense={regions[battleContext.defenderId].defense}
           winChance={battleContext.winChance}
+          projectedAction={battleContext.projectedBestAction}
+          projectedScore={battleContext.projectedScore}
           resolving={isResolvingBattle}
           resultText={battleResult}
           onResolve={resolveBattle}
@@ -1344,7 +1839,7 @@ export default function GOTMap() {
       ) : null}
 
       <AIDecisionPopup
-        open={decisionPopupOpen}
+        open={decisionPopupOpen && simulationPhase !== 'battle'}
         turn={turn}
         houseLabel={decisionPopupHouseLabel}
         trace={decisionPopupTrace}
@@ -1358,6 +1853,11 @@ export default function GOTMap() {
       <BattleMinimaxPopup
         open={battleMinimaxPopupOpen}
         battleTree={aiBattleTree}
+        focusedPath={battlePlaybackPath}
+        simulationRunning={isAutoSimulating}
+        canToggleSimulation={hasSimulationStarted}
+        onPauseSimulation={stopAutoSimulation}
+        onResumeSimulation={startAutoSimulation}
         onClose={() => setBattleMinimaxPopupOpen(false)}
       />
       </div>
