@@ -9,6 +9,7 @@ import BattleSkirmish3D from './BattleSkirmish3D'
 import ClashEffect from './ClashEffect'
 import AIDecisionPanel, { type AIBattleTreeSnapshot, type AIDecisionTreeSnapshot } from './AIDecisionPanel'
 import AIDecisionPopup from './AIDecisionPopup'
+import MCTSPlanningPopup from './MCTSPlanningPopup'
 import EventLog from './EventLog'
 import FloatingStatText from './FloatingStatText'
 import UnitToken from './UnitToken'
@@ -28,7 +29,7 @@ const regionOrder: RegionId[] = [
   'reach',
   'stormlands',
   'dorne',
-  'essos',
+  'iron_islands',
 ]
 
 type PlayableHouseId = HouseId
@@ -89,15 +90,18 @@ type BattleContext = {
 
 type BattlePhase = 'idle' | 'targeting' | 'march' | 'impact' | 'briefing'
 type DecisionAction = 'attack' | 'defend' | 'guard' | 'withdraw' | 'hold' | 'reinforce' | 'fortify' | 'recruit' | 'gather'
+type AlgorithmTag = 'fuzzy' | 'mcts' | 'minimax' | 'system'
 
 type ActionCue = {
   id: number
+  algorithmTag: AlgorithmTag
   action: DecisionAction
   houseId: HouseId
   houseLabel: string
   primaryRegionId: RegionId
   targetRegionId?: RegionId
   message: string
+  detail?: string
 }
 
 type BattleStepSummary = {
@@ -112,6 +116,7 @@ type BattleStepSummary = {
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const formatActionLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
 const AUTO_SIMULATION_STEP_MS = 1150
 const AUTO_SIMULATION_BATTLE_PAUSE_MS = 650
 const AUTO_SIMULATION_RESULT_PAUSE_MS = 760
@@ -131,12 +136,36 @@ const AI_HOLD_GOLD_BONUS = 10
 const AI_HOLD_FOOD_BONUS = 12
 const AI_HOLD_INFLUENCE_BONUS = 4
 const AI_CAPTURE_GARRISON_SHARE = 0.6
+const THRONE_REGION_WIN_THRESHOLD = 4
 
 const SKIRMISH_WEAPONS = {
   attackerSword: '/models/sword1.glb',
   defenderSword: '/models/sword2.glb',
   dagger: '/models/sword1.glb',
 } as const
+
+const normalizeHouseToken = (value: string) => value.trim().toLowerCase()
+
+const resolveBattleOwner = (
+  finalState: BattleState,
+  attacker: { houseId: HouseId; house: string },
+  defender: { houseId: HouseId; house: string }
+) => {
+  if (finalState.winner === 'attacker') return attacker
+  if (finalState.winner === 'defender') return defender
+
+  const ownerToken = normalizeHouseToken(finalState.region_owner || '')
+
+  if (ownerToken === normalizeHouseToken(attacker.house) || ownerToken === normalizeHouseToken(attacker.houseId)) {
+    return attacker
+  }
+
+  if (ownerToken === normalizeHouseToken(defender.house) || ownerToken === normalizeHouseToken(defender.houseId)) {
+    return defender
+  }
+
+  return defender
+}
 
 export default function GOTMap() {
   const [regions, setRegions] = useState(() => ({ ...regionData }))
@@ -178,6 +207,7 @@ export default function GOTMap() {
   const [battleMinimaxPopupOpen, setBattleMinimaxPopupOpen] = useState(false)
   const [battlePlaybackPath, setBattlePlaybackPath] = useState<number[] | null>(null)
   const [battleStepSummary, setBattleStepSummary] = useState<BattleStepSummary | null>(null)
+  const [lastOwnershipChange, setLastOwnershipChange] = useState<string | null>(null)
   const [aiSimulationNote, setAiSimulationNote] = useState<string | null>(null)
   const [decisionPopupOpen, setDecisionPopupOpen] = useState(false)
   const [decisionPopupStep, setDecisionPopupStep] = useState(0)
@@ -185,6 +215,9 @@ export default function GOTMap() {
   const [decisionPopupReason, setDecisionPopupReason] = useState<string | null>(null)
   const [decisionPopupHouseLabel, setDecisionPopupHouseLabel] = useState<string>('')
   const [decisionPopupPaused, setDecisionPopupPaused] = useState(false)
+  const [mctsPopupOpen, setMctsPopupOpen] = useState(false)
+  const [mctsPopupTrace, setMctsPopupTrace] = useState<AIDecisionTrace['mcts']>(null)
+  const [mctsPopupAutoClose, setMctsPopupAutoClose] = useState(false)
   const [isAutoSimulating, setIsAutoSimulating] = useState(false)
   const [hasSimulationStarted, setHasSimulationStarted] = useState(false)
   const [isSimulationSequenceBusy, setIsSimulationSequenceBusy] = useState(false)
@@ -195,6 +228,7 @@ export default function GOTMap() {
   const decisionPopupPausedRef = useRef(false)
   const decisionVisualizationRunRef = useRef(0)
   const isAutoSimulatingRef = useRef(false)
+  const mctsPopupOpenRef = useRef(false)
   const pendingAutoBattleResumeRef = useRef<(() => void) | null>(null)
 
   const activeResources = resourcesByHouse[currentFaction]
@@ -264,8 +298,17 @@ export default function GOTMap() {
   }, [resourcesByHouse, territoryCounts, totalArmyByHouse])
 
   const fullControlWinner = useMemo(
-    () => PLAYABLE_HOUSES.find((house) => territoryCounts[house] === availableRegions.length) ?? null,
-    [availableRegions.length, territoryCounts]
+    () => PLAYABLE_HOUSES.find((house) => territoryCounts[house] >= THRONE_REGION_WIN_THRESHOLD) ?? null,
+    [territoryCounts]
+  )
+
+  const regionsByHouse = useMemo(
+    () =>
+      PLAYABLE_HOUSES.map((houseId) => ({
+        houseId,
+        regions: availableRegions.filter((regionId) => regions[regionId].houseId === houseId).map((regionId) => regions[regionId].name),
+      })),
+    [availableRegions, regions]
   )
 
   const currentFuzzyInputs = useMemo(
@@ -279,6 +322,20 @@ export default function GOTMap() {
       }),
     [activeResources, availableRegions, currentFaction, diplomacy, regions]
   )
+
+  const liveAIDecision = useMemo(
+    () =>
+      pickAIDecision({
+        house: currentFaction,
+        regions,
+        availableRegionIds: availableRegions,
+        diplomacy,
+        resources: activeResources,
+      }),
+    [activeResources, availableRegions, currentFaction, diplomacy, regions]
+  )
+
+  const liveMctsTrace = decisionPopupTrace?.mcts ?? liveAIDecision?.trace.mcts ?? null
 
   const selectedData = selectedRegion ? regions[selectedRegion] : null
   const isSelectedOwnedByCurrentFaction = selectedData && selectedData.houseId === currentFaction
@@ -314,6 +371,61 @@ export default function GOTMap() {
     return regions[selectedRegion].neighbors
   }, [regions, selectedRegion])
 
+  const algorithmSpotlight = useMemo(() => {
+    const fuzzySummary = decisionPopupTrace?.finalDecisionLabel ?? aiReason ?? 'Waiting for strategic evaluation'
+    const mctsSummary = liveMctsTrace
+      ? `${liveMctsTrace.selectedLabel} · ${liveMctsTrace.iterations} rollouts`
+      : 'No concrete target chosen yet'
+    const minimaxSummary = battleStepSummary
+      ? `${battleStepSummary.attackerAction ?? 'Waiting'} vs ${battleStepSummary.defenderAction ?? 'Waiting'}`
+      : aiBattleTree?.bestAction
+        ? `Best battle move: ${aiBattleTree.bestAction}`
+        : 'No battle is active'
+
+    const activeStage: AlgorithmTag =
+      simulationPhase === 'battle'
+        ? 'minimax'
+        : decisionPopupOpen
+          ? 'fuzzy'
+          : actionCue?.algorithmTag ?? 'system'
+
+    return [
+      {
+        key: 'fuzzy',
+        label: 'Fuzzy Logic',
+        summary: fuzzySummary,
+        status:
+          activeStage === 'fuzzy'
+            ? 'active'
+            : decisionPopupTrace
+              ? 'done'
+              : 'idle',
+      },
+      {
+        key: 'mcts',
+        label: 'MCTS Planner',
+        summary: mctsSummary,
+        status:
+          activeStage === 'mcts'
+            ? 'active'
+            : decisionPopupTrace?.mcts
+              ? 'done'
+              : 'idle',
+      },
+      {
+        key: 'minimax',
+        label: 'Minimax Battle',
+        summary: minimaxSummary,
+        status:
+          activeStage === 'minimax'
+            ? 'active'
+            : aiBattleTree
+              ? 'done'
+              : 'idle',
+      },
+    ] as const
+  }, [actionCue?.algorithmTag, aiBattleTree, aiReason, battleStepSummary, decisionPopupOpen, decisionPopupTrace, liveMctsTrace, simulationPhase])
+
   const addEvent = (entry: string) => {
     setEventLog((prev) => [entry, ...prev].slice(0, 9))
   }
@@ -326,11 +438,28 @@ export default function GOTMap() {
     isAutoSimulatingRef.current = isAutoSimulating
   }, [isAutoSimulating])
 
+  useEffect(() => {
+    mctsPopupOpenRef.current = mctsPopupOpen
+  }, [mctsPopupOpen])
+
   const closeDecisionPopup = () => {
     decisionVisualizationRunRef.current += 1
     decisionPopupPausedRef.current = false
     setDecisionPopupPaused(false)
     setDecisionPopupOpen(false)
+  }
+
+  const openMctsSimulation = (trace: AIDecisionTrace['mcts'], autoClose = false) => {
+    if (!trace) return
+    setMctsPopupAutoClose(autoClose)
+    setMctsPopupTrace(trace)
+    setMctsPopupOpen(true)
+  }
+
+  const closeMctsSimulation = () => {
+    setMctsPopupOpen(false)
+    setMctsPopupTrace(null)
+    setMctsPopupAutoClose(false)
   }
 
   useEffect(() => {
@@ -370,6 +499,26 @@ export default function GOTMap() {
       const slice = Math.min(120, ms - elapsed)
       await wait(slice)
       elapsed += slice
+    }
+  }
+
+  const waitForMctsPopupLifecycle = async () => {
+    const openWaitDeadline = Date.now() + 1500
+    let sawOpen = mctsPopupOpenRef.current
+
+    while (!sawOpen && Date.now() < openWaitDeadline) {
+      await wait(60)
+      sawOpen = mctsPopupOpenRef.current
+    }
+
+    if (!sawOpen) {
+      // Fallback guard: avoid hanging if popup couldn't open for any reason.
+      await wait(900)
+      return
+    }
+
+    while (mctsPopupOpenRef.current) {
+      await wait(120)
     }
   }
 
@@ -527,6 +676,7 @@ export default function GOTMap() {
     setSelectedRegion(targetId)
     setAttackSource(sourceId)
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'attack',
       houseId: 'targaryen',
       houseLabel: HOUSE_META.targaryen.label,
@@ -768,6 +918,7 @@ export default function GOTMap() {
     setSimulationPhase('battle')
     setHasActedThisTurn(true)
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'attack',
       houseId: attacker.houseId,
       houseLabel: attacker.house,
@@ -852,6 +1003,7 @@ export default function GOTMap() {
     setHasActedThisTurn(true)
     setSimulationPhase('ending')
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'recruit',
       houseId: regions[regionId].houseId,
       houseLabel: regions[regionId].house,
@@ -876,6 +1028,7 @@ export default function GOTMap() {
     setHasActedThisTurn(true)
     setSimulationPhase('ending')
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'fortify',
       houseId: regions[regionId].houseId,
       houseLabel: regions[regionId].house,
@@ -899,6 +1052,7 @@ export default function GOTMap() {
     setHasActedThisTurn(true)
     setSimulationPhase('ending')
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'gather',
       houseId: regions[regionId].houseId,
       houseLabel: regions[regionId].house,
@@ -1052,43 +1206,64 @@ export default function GOTMap() {
     finalState: BattleState,
     attackerHouseId: HouseId,
     attackerHouseLabel: string,
+    defenderHouseId: HouseId,
     defenderHouseLabel: string
   ) => {
-    const attackerWon = finalState.region_owner === attackerHouseLabel
-    const occupyingArmy = attackerWon
-      ? Math.min(finalState.attacker_army, Math.max(1, Math.round(finalState.attacker_army * AI_CAPTURE_GARRISON_SHARE)))
-      : finalState.defender_army
-    const returningArmy = attackerWon ? Math.max(0, finalState.attacker_army - occupyingArmy) : finalState.attacker_army
+    const resolvedOwner = resolveBattleOwner(
+      finalState,
+      { houseId: attackerHouseId, house: attackerHouseLabel },
+      { houseId: defenderHouseId, house: defenderHouseLabel }
+    )
+    const attackerWon = resolvedOwner.houseId === attackerHouseId
+    const capturedRegionId = attackerWon ? targetId : sourceId
+    const previousOwnerLabel = regions[capturedRegionId].house
+    const nextOwnerLabel = resolvedOwner.house
+    const occupyingArmy = Math.max(
+      1,
+      Math.round((attackerWon ? finalState.attacker_army : finalState.defender_army) * AI_CAPTURE_GARRISON_SHARE)
+    )
+    const sourceArmy = attackerWon
+      ? Math.max(0, finalState.attacker_army - occupyingArmy)
+      : occupyingArmy
+    const targetArmy = attackerWon
+      ? occupyingArmy
+      : Math.max(1, finalState.defender_army - occupyingArmy)
 
     setRegions((prev) => ({
       ...prev,
       [sourceId]: {
         ...prev[sourceId],
-        army: returningArmy,
+        army: sourceArmy,
+        houseId: attackerWon ? prev[sourceId].houseId : resolvedOwner.houseId,
+        house: attackerWon ? prev[sourceId].house : resolvedOwner.house,
       },
       [targetId]: {
         ...prev[targetId],
-        army: occupyingArmy,
-        houseId: attackerWon ? attackerHouseId : prev[targetId].houseId,
-        house: attackerWon ? attackerHouseLabel : prev[targetId].house,
+        army: targetArmy,
+        houseId: attackerWon ? resolvedOwner.houseId : prev[targetId].houseId,
+        house: attackerWon ? resolvedOwner.house : prev[targetId].house,
       },
     }))
 
     const sourcePos = regions[sourceId].tokenPosition
     const targetPos = regions[targetId].tokenPosition
-    addFloatingText(sourcePos.x, sourcePos.y, `${returningArmy} Return`, attackerWon ? 'neutral' : 'negative')
-    addFloatingText(targetPos.x, targetPos.y, attackerWon ? `${occupyingArmy} Occupy` : `${occupyingArmy} Hold`, attackerWon ? 'positive' : 'neutral')
+    addFloatingText(sourcePos.x, sourcePos.y, attackerWon ? `${sourceArmy} Return` : `${sourceArmy} Occupy`, attackerWon ? 'neutral' : 'positive')
+    addFloatingText(targetPos.x, targetPos.y, attackerWon ? `${targetArmy} Occupy` : `${targetArmy} Hold`, attackerWon ? 'positive' : 'neutral')
+
+    const ownershipSummary = `${regions[capturedRegionId].name}: ${previousOwnerLabel} -> ${nextOwnerLabel}`
+    setLastOwnershipChange(ownershipSummary)
+    addEvent(`Ownership update: ${ownershipSummary}.`)
 
     setSimulationPhase('ending')
     setAiSimulationNote(
       attackerWon
         ? `Battle executed with minimax. ${attackerHouseLabel} captures ${regions[targetId].name} after optimal battle play.`
-        : `Battle executed with minimax. ${defenderHouseLabel} holds ${regions[targetId].name} after optimal battle play.`
+        : `Battle executed with minimax. ${defenderHouseLabel} wins and captures ${regions[sourceId].name}.`
     )
     addEvent(
       attackerWon
         ? `${attackerHouseLabel} captures ${regions[targetId].name} by minimax battle resolution.`
-        : `${defenderHouseLabel} holds ${regions[targetId].name} after minimax battle resolution.`
+        : `${defenderHouseLabel} wins and captures ${regions[sourceId].name} by minimax battle resolution.`
     )
   }
 
@@ -1105,6 +1280,7 @@ export default function GOTMap() {
     setSimulationPhase('battle')
 
     triggerActionCue({
+      algorithmTag: 'system',
       action: 'attack',
       houseId: attacker.houseId,
       houseLabel: attacker.house,
@@ -1118,7 +1294,7 @@ export default function GOTMap() {
     )
 
     await wait(autoMode ? AUTO_SIMULATION_BATTLE_PAUSE_MS / 2 : AUTO_SIMULATION_BATTLE_PAUSE_MS)
-    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.house)
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house)
   }
 
   const runAutoMinimaxBattlePlayback = async (sourceId: RegionId, targetId: RegionId) => {
@@ -1170,12 +1346,14 @@ export default function GOTMap() {
       setBattleMinimaxPopupOpen(false)
 
       triggerActionCue({
+        algorithmTag: 'minimax',
         action: actionCueType,
         houseId: node.nodeType === 'max' ? attacker.houseId : defender.houseId,
         houseLabel: actingHouse,
         primaryRegionId: node.nodeType === 'max' ? sourceId : targetId,
         targetRegionId: chosenChild.action === BattleAction.Attack ? (node.nodeType === 'max' ? targetId : sourceId) : undefined,
         message: `${actingHouse} chooses ${chosenChild.action}`,
+        detail: `Minimax selected this ${node.nodeType === 'max' ? 'attacker' : 'defender'} move in round ${currentRound}.`,
       })
 
       if (chosenChild.action === BattleAction.Attack) {
@@ -1234,7 +1412,7 @@ export default function GOTMap() {
       }
     }
 
-    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.house)
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house)
     setBattlePlaybackPath(null)
     setBattleMinimaxPopupOpen(false)
     return `${result.finalState.region_owner} wins the battle`
@@ -1319,23 +1497,86 @@ export default function GOTMap() {
 
       const cueRegionId = decision.regionId || decision.targetId
       if (cueRegionId) {
-        const cueMessage =
-          decision.action === 'attack' && decision.targetId
-            ? `${HOUSE_META[currentFaction].label} intends to attack ${regions[decision.targetId].name}`
-            : decision.action === 'defend'
+        if (decision.trace.mcts) {
+          const waitForMctsCompletion = decision.action === 'attack'
+          openMctsSimulation(decision.trace.mcts, waitForMctsCompletion)
+
+          const attackSourceId = decision.trace.attackSourceRegionId
+          const attackTargetId = decision.targetId || decision.trace.targetRegionId
+          const attackSource = attackSourceId ? regions[attackSourceId] : null
+          const attackTarget = attackTargetId ? regions[attackTargetId] : null
+          const mctsMessage =
+            attackSource && attackTarget
+              ? `${attackSource.house} attacks ${attackTarget.house} at ${attackTarget.name}`
+              : `MCTS selected ${decision.trace.mcts.selectedLabel}`
+          const mctsDetail =
+            attackSource && attackTarget
+              ? `Path: ${attackSource.name} -> ${attackTarget.name} | ${decision.trace.mcts.iterations} iterations, rollout depth ${decision.trace.mcts.rolloutDepth}.`
+              : `${decision.trace.mcts.iterations} iterations, rollout depth ${decision.trace.mcts.rolloutDepth}.`
+
+          triggerActionCue({
+            algorithmTag: 'mcts',
+            action: decision.action,
+            houseId: currentFaction,
+            houseLabel: HOUSE_META[currentFaction].label,
+            primaryRegionId: cueRegionId,
+            targetRegionId: decision.targetId || undefined,
+            message: mctsMessage,
+            detail: mctsDetail,
+          })
+
+          if (attackSource && attackTarget) {
+            addEvent(`MCTS confirms attack: ${attackSource.house} -> ${attackTarget.house} at ${attackTarget.name}.`)
+          }
+
+          const plannerPos = regions[cueRegionId].tokenPosition
+          addFloatingText(plannerPos.x, plannerPos.y - 20, 'MCTS Pick', 'neutral')
+          if (waitForMctsCompletion) {
+            await waitForMctsPopupLifecycle()
+
+            triggerActionCue({
+              algorithmTag: 'minimax',
+              action: 'attack',
+              houseId: currentFaction,
+              houseLabel: HOUSE_META[currentFaction].label,
+              primaryRegionId: cueRegionId,
+              targetRegionId: decision.targetId || undefined,
+              message: 'MCTS complete. Proceeding to Minimax battle resolution.',
+            })
+
+            addEvent('MCTS playback complete. Proceeding to minimax battle resolution.')
+
+            if (autoMode) {
+              await waitForSimulationProgress(420)
+            } else {
+              await wait(420)
+            }
+          } else if (autoMode) {
+            await waitForSimulationProgress(800)
+          } else {
+            await wait(950)
+          }
+        }
+
+        if (decision.action !== 'attack') {
+          const cueMessage =
+            decision.action === 'defend'
               ? `${HOUSE_META[currentFaction].label} intends to defend ${regions[cueRegionId].name}`
               : decision.action === 'reinforce'
                 ? `${HOUSE_META[currentFaction].label} intends to reinforce ${regions[cueRegionId].name}`
                 : `${HOUSE_META[currentFaction].label} holds position in ${regions[cueRegionId].name}`
 
-        triggerActionCue({
-          action: decision.action,
-          houseId: currentFaction,
-          houseLabel: HOUSE_META[currentFaction].label,
-          primaryRegionId: cueRegionId,
-          targetRegionId: decision.targetId || undefined,
-          message: cueMessage,
-        })
+          triggerActionCue({
+            algorithmTag: 'fuzzy',
+            action: decision.action,
+            houseId: currentFaction,
+            houseLabel: HOUSE_META[currentFaction].label,
+            primaryRegionId: cueRegionId,
+            targetRegionId: decision.targetId || undefined,
+            message: cueMessage,
+            detail: `Fuzzy chose ${formatActionLabel(decision.action)} for this turn.`,
+          })
+        }
 
         const pos = regions[cueRegionId].tokenPosition
         const floatText =
@@ -1400,7 +1641,7 @@ export default function GOTMap() {
   useEffect(() => {
     if (!fullControlWinner) return
     setIsAutoSimulating(false)
-    addEvent(`Victory declared: ${HOUSE_META[fullControlWinner].label} controls the entire realm.`)
+    addEvent(`Throne victory declared: ${HOUSE_META[fullControlWinner].label} reached ${THRONE_REGION_WIN_THRESHOLD} regions and wins the game.`)
   }, [fullControlWinner])
 
   useEffect(() => {
@@ -1434,16 +1675,21 @@ export default function GOTMap() {
     if (!battleContext || isResolvingBattle) return
     const attacker = regions[battleContext.attackerId]
     const defender = regions[battleContext.defenderId]
-    const attackerWon = battleContext.finalState.region_owner === attacker.house
-    const occupyingArmy = attackerWon
-      ? Math.min(
-          battleContext.finalState.attacker_army,
-          Math.max(1, Math.round(battleContext.finalState.attacker_army * AI_CAPTURE_GARRISON_SHARE))
-        )
-      : battleContext.finalState.defender_army
-    const returningArmy = attackerWon
+    const resolvedOwner = resolveBattleOwner(battleContext.finalState, attacker, defender)
+    const attackerWon = resolvedOwner.houseId === attacker.houseId
+    const capturedRegionId = attackerWon ? battleContext.defenderId : battleContext.attackerId
+    const previousOwnerLabel = regions[capturedRegionId].house
+    const nextOwnerLabel = resolvedOwner.house
+    const occupyingArmy = Math.max(
+      1,
+      Math.round((attackerWon ? battleContext.finalState.attacker_army : battleContext.finalState.defender_army) * AI_CAPTURE_GARRISON_SHARE)
+    )
+    const sourceArmy = attackerWon
       ? Math.max(0, battleContext.finalState.attacker_army - occupyingArmy)
-      : battleContext.finalState.attacker_army
+      : occupyingArmy
+    const targetArmy = attackerWon
+      ? occupyingArmy
+      : Math.max(1, battleContext.finalState.defender_army - occupyingArmy)
 
     setIsResolvingBattle(true)
     await wait(500)
@@ -1453,11 +1699,11 @@ export default function GOTMap() {
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: returningArmy,
+          army: sourceArmy,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: occupyingArmy,
+          army: targetArmy,
           houseId: prev[battleContext.attackerId].houseId,
           house: prev[battleContext.attackerId].house,
         },
@@ -1465,8 +1711,8 @@ export default function GOTMap() {
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `${returningArmy} Return`, 'neutral')
-      addFloatingText(targetPos.x, targetPos.y, `${occupyingArmy} Occupy`, 'positive')
+      addFloatingText(sourcePos.x, sourcePos.y, `${sourceArmy} Return`, 'neutral')
+      addFloatingText(targetPos.x, targetPos.y, `${targetArmy} Occupy`, 'positive')
       addEvent(`${defender.name} was captured by ${attacker.house} using minimax battle resolution.`)
       setBattleResult(`${attacker.house} captures ${defender.name}`)
       playWarCue('result')
@@ -1475,22 +1721,28 @@ export default function GOTMap() {
         ...prev,
         [battleContext.attackerId]: {
           ...prev[battleContext.attackerId],
-          army: battleContext.finalState.attacker_army,
+          army: sourceArmy,
+          houseId: prev[battleContext.defenderId].houseId,
+          house: prev[battleContext.defenderId].house,
         },
         [battleContext.defenderId]: {
           ...prev[battleContext.defenderId],
-          army: battleContext.finalState.defender_army,
+          army: targetArmy,
         },
       }))
 
       const sourcePos = attacker.tokenPosition
       const targetPos = defender.tokenPosition
-      addFloatingText(sourcePos.x, sourcePos.y, `A:${battleContext.finalState.attacker_army}`, 'negative')
-      addFloatingText(targetPos.x, targetPos.y, `D:${battleContext.finalState.defender_army}`, 'neutral')
-      addEvent(`${defender.house} holds ${defender.name} after minimax battle resolution.`)
-      setBattleResult(`${defender.house} holds ${defender.name}`)
+      addFloatingText(sourcePos.x, sourcePos.y, `${sourceArmy} Occupy`, 'positive')
+      addFloatingText(targetPos.x, targetPos.y, `${targetArmy} Hold`, 'neutral')
+      addEvent(`${defender.house} wins and captures ${attacker.name} after minimax battle resolution.`)
+      setBattleResult(`${defender.house} captures ${attacker.name}`)
       playWarCue('result')
     }
+
+    const ownershipSummary = `${regions[capturedRegionId].name}: ${previousOwnerLabel} -> ${nextOwnerLabel}`
+    setLastOwnershipChange(ownershipSummary)
+    addEvent(`Ownership update: ${ownershipSummary}.`)
 
     setSimulationPhase('ending')
     setIsResolvingBattle(false)
@@ -1525,15 +1777,29 @@ export default function GOTMap() {
         className={`map-container ${isCinematicActive ? 'is-cinematic' : ''} ${battlePhase === 'impact' ? 'is-impact' : ''}`}
       >
         {turnBanner ? <div className="turn-banner">{turnBanner}</div> : null}
+        <div className="algorithm-spotlight" aria-live="polite">
+          {algorithmSpotlight.map((stage) => (
+            <div
+              key={stage.key}
+              className={`algorithm-spotlight-card algorithm-spotlight-card-${stage.key} is-${stage.status}`}
+            >
+              <p className="algorithm-spotlight-label">{stage.label}</p>
+              <p className="algorithm-spotlight-summary">{stage.summary}</p>
+            </div>
+          ))}
+        </div>
         {actionCue ? (
           <div
             className={`action-cue action-cue-${actionCue.action}`}
             style={{ ['--cue-color' as string]: HOUSE_META[actionCue.houseId].color }}
             aria-live="polite"
           >
-            <p className="action-cue-eyebrow">{actionCue.houseLabel}</p>
+            <p className="action-cue-eyebrow">
+              {actionCue.houseLabel} {'•'} {actionCue.algorithmTag.toUpperCase()}
+            </p>
             <p className="action-cue-title">{actionCue.action.toUpperCase()}</p>
             <p className="action-cue-body">{actionCue.message}</p>
+            {actionCue.detail ? <p className="action-cue-detail">{actionCue.detail}</p> : null}
           </div>
         ) : null}
         {simulationPhase === 'battle' && battleStepSummary ? (
@@ -1552,6 +1818,16 @@ export default function GOTMap() {
               {battleStepSummary.defenderArmyBefore}
               {battleStepSummary.defenderArmyAfter !== null ? ` -> ${battleStepSummary.defenderArmyAfter}` : ''}
             </p>
+            {battleStepSummary.attackerArmyAfter !== null && battleStepSummary.defenderArmyAfter !== null ? (
+              <div className="battle-turn-hud-deltas">
+                <span className="battle-turn-delta is-attacker">
+                  A Loss {battleStepSummary.attackerArmyBefore - battleStepSummary.attackerArmyAfter}
+                </span>
+                <span className="battle-turn-delta is-defender">
+                  D Loss {battleStepSummary.defenderArmyBefore - battleStepSummary.defenderArmyAfter}
+                </span>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {isCinematicActive && <div className="map-cinematic-dim" aria-hidden />}
@@ -1653,6 +1929,13 @@ export default function GOTMap() {
       </div>
 
       <aside className="region-panel" aria-live="polite">
+        {lastOwnershipChange ? (
+          <div className="winner-banner">
+            <p className="winner-title">Last Ownership Change</p>
+            <p className="winner-reason">{lastOwnershipChange}</p>
+          </div>
+        ) : null}
+
         <div className="panel-actions">
           <button type="button" className="panel-btn panel-btn-featured" onClick={runFeaturedBattle} disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}>
             Demo: North attacks Riverlands
@@ -1703,18 +1986,33 @@ export default function GOTMap() {
           <div className="winner-banner">
             <p className="winner-title">
               {fullControlWinner
-                ? `Winner: ${HOUSE_META[fullControlWinner].label}`
+                ? `Throne Winner: ${HOUSE_META[fullControlWinner].label}`
                 : leaderBoard.leaderHouse
-                  ? `Current Leader: ${HOUSE_META[leaderBoard.leaderHouse].label}`
-                  : 'Current Leader: Draw'}
+                  ? `Current Leader (Not Winner Yet): ${HOUSE_META[leaderBoard.leaderHouse].label}`
+                  : 'Current Leader (Not Winner Yet): Draw'}
             </p>
             <p className="winner-reason">
               {fullControlWinner
-                ? `${HOUSE_META[fullControlWinner].label} controls the entire realm.`
-                : leaderBoard.leaderReason}
+                ? `${HOUSE_META[fullControlWinner].label} reached ${THRONE_REGION_WIN_THRESHOLD} regions and claims the Iron Throne.`
+                : `${leaderBoard.leaderReason} Throne victory only triggers at ${THRONE_REGION_WIN_THRESHOLD} regions.`}
             </p>
           </div>
         ) : null}
+
+        <div className="ownership-board">
+          <p className="ownership-board-title">Realm Ownership</p>
+          <div className="ownership-board-list">
+            {regionsByHouse.map((entry) => (
+              <div key={entry.houseId} className="ownership-board-card">
+                <p className="ownership-board-house">{HOUSE_META[entry.houseId].label}</p>
+                <p className="ownership-board-count">{entry.regions.length} regions</p>
+                <p className="ownership-board-regions">
+                  {entry.regions.length ? entry.regions.join(', ') : 'No regions controlled'}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {simulationPhase === 'battle' && battleStepSummary ? (
           <div className="battle-step-banner">
@@ -1738,9 +2036,11 @@ export default function GOTMap() {
           fuzzy={simulationPhase === 'battle' ? null : aiFuzzy}
           tree={simulationPhase === 'battle' ? null : aiTree}
           trace={simulationPhase === 'battle' ? null : decisionPopupTrace}
+          mctsTrace={simulationPhase === 'battle' ? null : liveMctsTrace}
           battleTree={aiBattleTree}
           finalReason={aiReason}
           simulationNote={aiSimulationNote}
+          onOpenMctsSimulation={liveMctsTrace ? () => openMctsSimulation(liveMctsTrace) : undefined}
         />
 
         {selectedData ? (
@@ -1902,6 +2202,12 @@ export default function GOTMap() {
         onPauseSimulation={stopAutoSimulation}
         onResumeSimulation={startAutoSimulation}
         onClose={() => setBattleMinimaxPopupOpen(false)}
+      />
+      <MCTSPlanningPopup
+        open={mctsPopupOpen}
+        trace={mctsPopupTrace ?? null}
+        autoCloseAfterPlayback={mctsPopupAutoClose}
+        onClose={closeMctsSimulation}
       />
       </div>
     </>

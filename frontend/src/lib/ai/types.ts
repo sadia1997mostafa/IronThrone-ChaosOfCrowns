@@ -133,9 +133,23 @@ export type MCTSCandidateStat = {
   chosen: boolean
 }
 
+export type MCTSIterationTrace = {
+  iteration: number
+  selectedLabel: string
+  selectedVisitsBefore: number
+  selectedAverageBefore: number
+  rolloutScore: number
+  bestLabelAfter: string
+  bestAverageAfter: number
+  candidateSnapshots: MCTSCandidateStat[]
+}
+
 export type MCTSPlanningTrace = {
   iterations: number
   rolloutDepth: number
+  exploration: number
   selectedLabel: string
+  selectedAverageScore: number
   candidates: MCTSCandidateStat[]
+  iterationLog: MCTSIterationTrace[]
 }

@@ -1,5 +1,5 @@
 import type { RegionId } from '@/assets/mapPaths'
-import type { AIActionType, AIInputState, MCTSPlanningTrace, PlayableHouseId } from './types'
+import type { AIActionType, AIInputState, MCTSCandidateStat, MCTSIterationTrace, MCTSPlanningTrace, PlayableHouseId } from './types'
 
 type StrategicRegion = {
   houseId: AIInputState['house']
@@ -324,6 +324,28 @@ function rollout(state: StrategicState, input: AIInputState, random: () => numbe
   return evaluateStrategicState(currentState, input)
 }
 
+function snapshotCandidateStats(
+  stats: Array<{
+    candidate: PlannerCandidate
+    visits: number
+    totalScore: number
+  }>,
+  input: AIInputState
+) {
+  return stats
+    .map((entry) => ({
+      label: entry.candidate.label,
+      regionId: entry.candidate.regionId,
+      regionName: entry.candidate.regionId ? input.regions[entry.candidate.regionId].name : null,
+      targetId: entry.candidate.targetId,
+      targetName: entry.candidate.targetId ? input.regions[entry.candidate.targetId].name : null,
+      visits: entry.visits,
+      averageScore: Math.round((entry.totalScore / Math.max(1, entry.visits)) * 100) / 100,
+      chosen: false,
+    }))
+    .sort((a, b) => b.averageScore - a.averageScore || b.visits - a.visits)
+}
+
 export function planWithMCTS(input: AIInputState, action: AIActionType): PlannerResult | null {
   const initialState = cloneState(input)
   const rootCandidates = buildCandidates(action, initialState, input)
@@ -345,6 +367,7 @@ export function planWithMCTS(input: AIInputState, action: AIActionType): Planner
     visits: 0,
     totalScore: 0,
   }))
+  const iterationLog: MCTSIterationTrace[] = []
 
   for (let iteration = 0; iteration < MCTS_ITERATIONS; iteration += 1) {
     let selected = stats.find((entry) => entry.visits === 0)
@@ -369,6 +392,20 @@ export function planWithMCTS(input: AIInputState, action: AIActionType): Planner
     const score = rollout(expandedState, input, random)
     selected.visits += 1
     selected.totalScore += score
+
+    const candidateSnapshots = snapshotCandidateStats(stats, input)
+    const bestSnapshot = candidateSnapshots[0] ?? null
+
+    iterationLog.push({
+      iteration: iteration + 1,
+      selectedLabel: selected.candidate.label,
+      selectedVisitsBefore: Math.max(0, selected.visits - 1),
+      selectedAverageBefore: Math.round((selected.totalScore - score) / Math.max(1, selected.visits - 1) * 100) / 100 || 0,
+      rolloutScore: Math.round(score * 100) / 100,
+      bestLabelAfter: bestSnapshot?.label ?? selected.candidate.label,
+      bestAverageAfter: bestSnapshot?.averageScore ?? Math.round(score * 100) / 100,
+      candidateSnapshots,
+    })
   }
 
   const best = stats.reduce((currentBest, entry) => {
@@ -380,25 +417,22 @@ export function planWithMCTS(input: AIInputState, action: AIActionType): Planner
 
   if (!best) return null
 
+  const finalSnapshots = snapshotCandidateStats(stats, input)
+
   return {
     regionId: best.candidate.regionId,
     targetId: best.candidate.targetId,
     trace: {
       iterations: MCTS_ITERATIONS,
       rolloutDepth: MCTS_ROLLOUT_DEPTH,
+      exploration: MCTS_EXPLORATION,
       selectedLabel: best.candidate.label,
-      candidates: stats
-        .map((entry) => ({
-          label: entry.candidate.label,
-          regionId: entry.candidate.regionId,
-          regionName: entry.candidate.regionId ? input.regions[entry.candidate.regionId].name : null,
-          targetId: entry.candidate.targetId,
-          targetName: entry.candidate.targetId ? input.regions[entry.candidate.targetId].name : null,
-          visits: entry.visits,
-          averageScore: Math.round((entry.totalScore / Math.max(1, entry.visits)) * 100) / 100,
-          chosen: entry.candidate.label === best.candidate.label,
-        }))
-        .sort((a, b) => b.averageScore - a.averageScore),
+      selectedAverageScore: Math.round((best.totalScore / Math.max(1, best.visits)) * 100) / 100,
+      candidates: finalSnapshots.map((entry) => ({
+        ...entry,
+        chosen: entry.label === best.candidate.label,
+      })) as MCTSCandidateStat[],
+      iterationLog,
     },
   }
 }

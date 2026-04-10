@@ -182,130 +182,141 @@ export default function AIDecisionPopup({
           </div>
         </div>
 
-        <div className="ai-explainer-block">
-          <p className="ai-explainer-title">{explain.title}</p>
-          <p className="ai-explainer-body">{explain.body}</p>
-          <p className="ai-explainer-body ai-explainer-progress">
-            Step {Math.min(step + 1, steps.length)} of {steps.length}
-            {paused ? ' | Paused' : ''}
-          </p>
-        </div>
-
-        <ol className="ai-decision-steps">
-          {steps.map((label, index) => {
-            const state = getStepState(step, index)
-            return (
-              <li key={label} className={`ai-step ai-step-${state}`}>
-                <span className="ai-step-index">{index + 1}</span>
-                <span className="ai-step-label">{label}</span>
-              </li>
-            )
-          })}
-        </ol>
-
-        <div className="ai-tree-live">
-          <div className={`ai-tree-live-branch ${step >= 0 ? 'is-on' : ''}`}>
-            <p className="ai-tree-live-title">1. Inputs</p>
-            <div className="ai-calc-grid">
-              <div className="ai-calc-card">
-                <span className="ai-calc-label">Own Strength</span>
-                <strong>{Math.round(trace.inputs.ownStrength)}</strong>
-              </div>
-              <div className="ai-calc-card">
-                <span className="ai-calc-label">Enemy Strength</span>
-                <strong>{Math.round(trace.inputs.enemyStrength)}</strong>
-              </div>
-              <div className="ai-calc-card">
-                <span className="ai-calc-label">Region Importance</span>
-                <strong>{Math.round(trace.inputs.regionImportance)}</strong>
-              </div>
-              <div className="ai-calc-card">
-                <span className="ai-calc-label">Gold</span>
-                <strong>{Math.round(trace.inputs.resources)}</strong>
-              </div>
-              <div className="ai-calc-card">
-                <span className="ai-calc-label">Aggression</span>
-                <strong>{Math.round(trace.inputs.aggression)}</strong>
-              </div>
+        <div className="ai-decision-layout">
+          <div className="ai-decision-sidebar">
+            <div className="ai-explainer-block">
+              <p className="ai-explainer-title">{explain.title}</p>
+              <p className="ai-explainer-body">{explain.body}</p>
+              <p className="ai-explainer-body ai-explainer-progress">
+                Step {Math.min(step + 1, steps.length)} of {steps.length}
+                {paused ? ' | Paused' : ''}
+              </p>
             </div>
-          </div>
 
-          <div className={`ai-tree-live-branch ${step >= 1 ? 'is-on' : ''}`}>
-            <p className="ai-tree-live-title">2. Memberships</p>
-            <div className="ai-membership-table">
-              {membershipRows(trace).map((row) => (
-                <div key={row.label} className="ai-membership-row">
-                  <span className="ai-membership-label">{row.label}</span>
-                  <span>Low {formatDecimal(row.values.low)}</span>
-                  <span>Medium {formatDecimal(row.values.medium)}</span>
-                  <span>High {formatDecimal(row.values.high)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className={`ai-tree-live-branch ${step >= getRuleStepStart() ? 'is-on' : ''}`}>
-            <p className="ai-tree-live-title">3. Rule Calculations</p>
-            <ul className="ai-rule-list">
-              {trace.ruleCalculations.map((rule, index) => {
-                const ruleStep = getRuleStepStart() + index
-                const state = getStepState(step, ruleStep)
-
+            <ol className="ai-decision-steps">
+              {steps.map((label, index) => {
+                const state = getStepState(step, index)
                 return (
-                  <li
-                    key={rule.id}
-                    className={`ai-rule-card ai-rule-card-${state} ${activeRuleIndex === index ? 'is-current' : ''}`}
-                  >
-                    <div className="ai-rule-card-head">
-                      <span>
-                        {rule.id} {'->'} {formatAction(rule.action)}
-                      </span>
-                      <strong>{rule.intensity}</strong>
-                    </div>
-                    <p className="ai-rule-card-text">{rule.description}</p>
-                    <div className="ai-rule-condition-list">
-                      {rule.conditions.map((condition) => (
-                        <span key={`${rule.id}-${condition.label}`} className="ai-rule-condition-chip">
-                          {condition.label}: {formatDecimal(condition.value)}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="ai-rule-math">{ruleFormula(rule)}</p>
-                    <p className="ai-rule-math">
-                      Contribution = {formatDecimal(rule.strength)} x {ruleWeight(rule)} = {formatDecimal(rule.contribution)}
-                    </p>
+                  <li key={label} className={`ai-step ai-step-${state}`}>
+                    <span className="ai-step-index">{index + 1}</span>
+                    <span className="ai-step-label">{label}</span>
                   </li>
                 )
               })}
-            </ul>
+            </ol>
           </div>
 
-          <div className={`ai-tree-live-branch ${step >= actionTotalsStep ? 'is-on' : ''}`}>
-            <p className="ai-tree-live-title">4. Action Totals</p>
-            <ul className="ai-action-total-list">
-              {trace.actionBreakdown.map((action) => (
-                <li key={action.action} className={trace.finalDecisionLabel.toLowerCase().startsWith(action.label.toLowerCase()) ? 'is-chosen' : ''}>
-                  <div className="ai-action-total-head">
-                    <span>{action.label}</span>
-                    <strong>{formatDecimal(action.total)}</strong>
+          <div className="ai-decision-main">
+            <div className="ai-tree-live">
+              <div className={`ai-tree-live-branch ${step >= 0 ? 'is-on' : ''}`}>
+                <p className="ai-tree-live-title">1. Inputs</p>
+                <div className="ai-calc-grid">
+                  <div className="ai-calc-card">
+                    <span className="ai-calc-label">Own Strength</span>
+                    <strong>{Math.round(trace.inputs.ownStrength)}</strong>
                   </div>
-                  <p className="ai-action-total-formula">
-                    {action.contributions.length
-                      ? action.contributions.map((entry) => `${entry.ruleId}(${formatDecimal(entry.contribution)})`).join(' + ')
-                      : 'No rules contributed'}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </div>
+                  <div className="ai-calc-card">
+                    <span className="ai-calc-label">Enemy Strength</span>
+                    <strong>{Math.round(trace.inputs.enemyStrength)}</strong>
+                  </div>
+                  <div className="ai-calc-card">
+                    <span className="ai-calc-label">Region Importance</span>
+                    <strong>{Math.round(trace.inputs.regionImportance)}</strong>
+                  </div>
+                  <div className="ai-calc-card">
+                    <span className="ai-calc-label">Gold</span>
+                    <strong>{Math.round(trace.inputs.resources)}</strong>
+                  </div>
+                  <div className="ai-calc-card">
+                    <span className="ai-calc-label">Aggression</span>
+                    <strong>{Math.round(trace.inputs.aggression)}</strong>
+                  </div>
+                </div>
+              </div>
 
-          <div className={`ai-tree-live-branch ai-tree-live-final ${step >= finalStep ? 'is-on' : ''}`}>
-            <p className="ai-tree-live-title">5. Final Decision</p>
-            <p>{trace.finalDecisionLabel}</p>
-            {trace.mcts ? <p>MCTS Selected: {trace.mcts.selectedLabel}</p> : null}
-            {trace.focusRegionName ? <p>Focus Region: {trace.focusRegionName}</p> : null}
-            {trace.targetRegionName ? <p>Target Region: {trace.targetRegionName}</p> : null}
-            {finalReason ? <p className="ai-tree-live-reason">{finalReason}</p> : null}
+              <div className={`ai-tree-live-branch ${step >= 1 ? 'is-on' : ''}`}>
+                <p className="ai-tree-live-title">2. Memberships</p>
+                <div className="ai-membership-table">
+                  {membershipRows(trace).map((row) => (
+                    <div key={row.label} className="ai-membership-row">
+                      <span className="ai-membership-label">{row.label}</span>
+                      <span>Low {formatDecimal(row.values.low)}</span>
+                      <span>Medium {formatDecimal(row.values.medium)}</span>
+                      <span>High {formatDecimal(row.values.high)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={`ai-tree-live-branch ${step >= getRuleStepStart() ? 'is-on' : ''}`}>
+                <p className="ai-tree-live-title">3. Rule Calculations</p>
+                <ul className="ai-rule-list">
+                  {trace.ruleCalculations.map((rule, index) => {
+                    const ruleStep = getRuleStepStart() + index
+                    const state = getStepState(step, ruleStep)
+
+                    return (
+                      <li
+                        key={rule.id}
+                        className={`ai-rule-card ai-rule-card-${state} ${activeRuleIndex === index ? 'is-current' : ''}`}
+                      >
+                        <div className="ai-rule-card-head">
+                          <span>
+                            {rule.id} {'->'} {formatAction(rule.action)}
+                          </span>
+                          <strong>{rule.intensity}</strong>
+                        </div>
+                        <p className="ai-rule-card-text">{rule.description}</p>
+                        <div className="ai-rule-condition-list">
+                          {rule.conditions.map((condition) => (
+                            <span key={`${rule.id}-${condition.label}`} className="ai-rule-condition-chip">
+                              {condition.label}: {formatDecimal(condition.value)}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="ai-rule-math">{ruleFormula(rule)}</p>
+                        <p className="ai-rule-math">
+                          Contribution = {formatDecimal(rule.strength)} x {ruleWeight(rule)} = {formatDecimal(rule.contribution)}
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+
+              <div className={`ai-tree-live-branch ${step >= actionTotalsStep ? 'is-on' : ''}`}>
+                <p className="ai-tree-live-title">4. Action Totals</p>
+                <ul className="ai-action-total-list">
+                  {trace.actionBreakdown.map((action) => (
+                    <li key={action.action} className={trace.finalDecisionLabel.toLowerCase().startsWith(action.label.toLowerCase()) ? 'is-chosen' : ''}>
+                      <div className="ai-action-total-head">
+                        <span>{action.label}</span>
+                        <strong>{formatDecimal(action.total)}</strong>
+                      </div>
+                      <p className="ai-action-total-formula">
+                        {action.contributions.length
+                          ? action.contributions.map((entry) => `${entry.ruleId}(${formatDecimal(entry.contribution)})`).join(' + ')
+                          : 'No rules contributed'}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className={`ai-tree-live-branch ai-tree-live-final ${step >= finalStep ? 'is-on' : ''}`}>
+                <p className="ai-tree-live-title">5. Final Decision</p>
+                <p>{trace.finalDecisionLabel}</p>
+                {trace.mcts ? (
+                  <p>
+                    MCTS Selected: {trace.mcts.selectedLabel} after {trace.mcts.iterations} iterations
+                    {typeof trace.mcts.selectedAverageScore === 'number' ? ` (avg ${trace.mcts.selectedAverageScore.toFixed(2)})` : ''}
+                  </p>
+                ) : null}
+                {trace.focusRegionName ? <p>Focus Region: {trace.focusRegionName}</p> : null}
+                {trace.targetRegionName ? <p>Target Region: {trace.targetRegionName}</p> : null}
+                {finalReason ? <p className="ai-tree-live-reason">{finalReason}</p> : null}
+              </div>
+            </div>
           </div>
         </div>
       </section>
