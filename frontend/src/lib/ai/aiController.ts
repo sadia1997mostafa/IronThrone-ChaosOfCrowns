@@ -149,7 +149,8 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
   })
 
   const selected = affordableCandidates[0] || evaluation.candidates[0]
-  const mctsPlan = selected.action === 'attack' ? planWithMCTS(input, selected.action) : null
+
+  const mctsPlan = selected.action === 'attack' || selected.action === 'reinforce' ? planWithMCTS(input, selected.action) : null
 
   const fallbackFocusRegionId = fuzzyInputs.focusOwnedRegion?.regionId || fuzzyInputs.focusTarget?.sourceId || null
   const focusRegionId =

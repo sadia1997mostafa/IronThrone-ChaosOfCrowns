@@ -155,6 +155,12 @@ export default function BattleMinimaxPopup({
           </p>
         </div>
 
+        {!simulationRunning ? (
+          <div className="battle-node-guide battle-node-guide-paused">
+            <p>Paused. Expand any branch to inspect the tree, then resume when you are ready to continue.</p>
+          </div>
+        ) : null}
+
         <div className="battle-node-explorer">
           <div className="battle-node-guide">
             {path.length === 0 ? (

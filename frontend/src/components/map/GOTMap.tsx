@@ -12,6 +12,8 @@ import AIDecisionPopup from './AIDecisionPopup'
 import MCTSPlanningPopup from './MCTSPlanningPopup'
 import EventLog from './EventLog'
 import FloatingStatText from './FloatingStatText'
+import RegionBannerToken from './RegionBannerToken'
+import VictoryCelebrationModal from './VictoryCelebrationModal'
 import UnitToken from './UnitToken'
 import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
@@ -71,6 +73,17 @@ const HOUSE_META: Record<string, { label: string; color: string; glyph: string; 
   },
 }
 
+const HOUSE_BANNER_IMAGE: Record<HouseId, string> = {
+  stark: '/images/banner/stark.png',
+  lannister: '/images/banner/lannister.png',
+  targaryen: '/images/banner/targeryan.png',
+  tyrell: '/images/banner/tyrell.png',
+}
+
+const INITIAL_OWNERS_BY_REGION = Object.fromEntries(
+  Object.entries(regionData).map(([regionId, data]) => [regionId, data.houseId])
+) as Record<RegionId, HouseId>
+
 type FloatingText = {
   id: number
   x: number
@@ -91,6 +104,15 @@ type BattleContext = {
 type BattlePhase = 'idle' | 'targeting' | 'march' | 'impact' | 'briefing'
 type DecisionAction = 'attack' | 'defend' | 'guard' | 'withdraw' | 'hold' | 'reinforce' | 'fortify' | 'recruit' | 'gather'
 type AlgorithmTag = 'fuzzy' | 'mcts' | 'minimax' | 'system'
+type SimulationDisplayMode = 'visual' | 'summary' | null
+
+type AITurnSummary = {
+  turn: number
+  houseLabel: string
+  fuzzyChoice: string
+  mctsChoice: string
+  minimaxChoice: string
+}
 
 type ActionCue = {
   id: number
@@ -199,6 +221,7 @@ export default function GOTMap() {
   })
   const [diplomacy, setDiplomacy] = useState<DiplomacyMatrix>(() => createInitialDiplomacy())
   const [turnBanner, setTurnBanner] = useState<string>('Turn 1 â€¢ House Stark')
+  const [decisionStageBanner, setDecisionStageBanner] = useState<string | null>(null)
   const [hasActedThisTurn, setHasActedThisTurn] = useState(false)
   const [aiReason, setAiReason] = useState<string | null>(null)
   const [aiFuzzy, setAiFuzzy] = useState<FuzzyStrategicOutput | null>(null)
@@ -220,16 +243,25 @@ export default function GOTMap() {
   const [mctsPopupAutoClose, setMctsPopupAutoClose] = useState(false)
   const [isAutoSimulating, setIsAutoSimulating] = useState(false)
   const [hasSimulationStarted, setHasSimulationStarted] = useState(false)
+  const [simulationDisplayMode, setSimulationDisplayMode] = useState<SimulationDisplayMode>(null)
+  const [aiTurnSummary, setAiTurnSummary] = useState<AITurnSummary | null>(null)
+  const [showVictoryCelebration, setShowVictoryCelebration] = useState(false)
   const [isSimulationSequenceBusy, setIsSimulationSequenceBusy] = useState(false)
+  const [battlePlaybackPaused, setBattlePlaybackPaused] = useState(false)
   const [actionCue, setActionCue] = useState<ActionCue | null>(null)
   const floatingIdRef = useRef(0)
   const actionCueIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
+  const previousRegionOwnersRef = useRef<Record<RegionId, HouseId>>({ ...INITIAL_OWNERS_BY_REGION })
+  const bannerTransitionTimersRef = useRef<Partial<Record<RegionId, number>>>({})
   const decisionPopupPausedRef = useRef(false)
   const decisionVisualizationRunRef = useRef(0)
   const isAutoSimulatingRef = useRef(false)
   const mctsPopupOpenRef = useRef(false)
   const pendingAutoBattleResumeRef = useRef<(() => void) | null>(null)
+  const battlePlaybackPausedRef = useRef(false)
+  const [bannerTransitions, setBannerTransitions] = useState<Partial<Record<RegionId, HouseId>>>({})
+  const aiVisualsEnabled = simulationDisplayMode !== 'summary'
 
   const activeResources = resourcesByHouse[currentFaction]
 
@@ -371,61 +403,6 @@ export default function GOTMap() {
     return regions[selectedRegion].neighbors
   }, [regions, selectedRegion])
 
-  const algorithmSpotlight = useMemo(() => {
-    const fuzzySummary = decisionPopupTrace?.finalDecisionLabel ?? aiReason ?? 'Waiting for strategic evaluation'
-    const mctsSummary = liveMctsTrace
-      ? `${liveMctsTrace.selectedLabel} · ${liveMctsTrace.iterations} rollouts`
-      : 'No concrete target chosen yet'
-    const minimaxSummary = battleStepSummary
-      ? `${battleStepSummary.attackerAction ?? 'Waiting'} vs ${battleStepSummary.defenderAction ?? 'Waiting'}`
-      : aiBattleTree?.bestAction
-        ? `Best battle move: ${aiBattleTree.bestAction}`
-        : 'No battle is active'
-
-    const activeStage: AlgorithmTag =
-      simulationPhase === 'battle'
-        ? 'minimax'
-        : decisionPopupOpen
-          ? 'fuzzy'
-          : actionCue?.algorithmTag ?? 'system'
-
-    return [
-      {
-        key: 'fuzzy',
-        label: 'Fuzzy Logic',
-        summary: fuzzySummary,
-        status:
-          activeStage === 'fuzzy'
-            ? 'active'
-            : decisionPopupTrace
-              ? 'done'
-              : 'idle',
-      },
-      {
-        key: 'mcts',
-        label: 'MCTS Planner',
-        summary: mctsSummary,
-        status:
-          activeStage === 'mcts'
-            ? 'active'
-            : decisionPopupTrace?.mcts
-              ? 'done'
-              : 'idle',
-      },
-      {
-        key: 'minimax',
-        label: 'Minimax Battle',
-        summary: minimaxSummary,
-        status:
-          activeStage === 'minimax'
-            ? 'active'
-            : aiBattleTree
-              ? 'done'
-              : 'idle',
-      },
-    ] as const
-  }, [actionCue?.algorithmTag, aiBattleTree, aiReason, battleStepSummary, decisionPopupOpen, decisionPopupTrace, liveMctsTrace, simulationPhase])
-
   const addEvent = (entry: string) => {
     setEventLog((prev) => [entry, ...prev].slice(0, 9))
   }
@@ -442,6 +419,63 @@ export default function GOTMap() {
     mctsPopupOpenRef.current = mctsPopupOpen
   }, [mctsPopupOpen])
 
+  useEffect(() => {
+    battlePlaybackPausedRef.current = battlePlaybackPaused
+  }, [battlePlaybackPaused])
+
+  useEffect(() => {
+    const changedRegions: Array<{ regionId: RegionId; previousOwner: HouseId }> = []
+
+    for (const regionId of availableRegions) {
+      const currentOwner = regions[regionId].houseId
+      const previousOwner = previousRegionOwnersRef.current[regionId]
+
+      if (currentOwner !== previousOwner) {
+        changedRegions.push({ regionId, previousOwner })
+      }
+    }
+
+    if (!changedRegions.length) return
+
+    setBannerTransitions((prev) => {
+      const next = { ...prev }
+
+      for (const { regionId, previousOwner } of changedRegions) {
+        next[regionId] = previousOwner
+      }
+
+      return next
+    })
+
+    for (const { regionId } of changedRegions) {
+      if (bannerTransitionTimersRef.current[regionId]) {
+        window.clearTimeout(bannerTransitionTimersRef.current[regionId])
+      }
+
+      bannerTransitionTimersRef.current[regionId] = window.setTimeout(() => {
+        setBannerTransitions((prev) => {
+          if (!prev[regionId]) return prev
+          const next = { ...prev }
+          delete next[regionId]
+          return next
+        })
+      }, 1200)
+    }
+
+    for (const regionId of availableRegions) {
+      previousRegionOwnersRef.current[regionId] = regions[regionId].houseId
+    }
+  }, [availableRegions, regions])
+
+  useEffect(
+    () => () => {
+      for (const timerId of Object.values(bannerTransitionTimersRef.current)) {
+        if (timerId) window.clearTimeout(timerId)
+      }
+    },
+    []
+  )
+
   const closeDecisionPopup = () => {
     decisionVisualizationRunRef.current += 1
     decisionPopupPausedRef.current = false
@@ -450,6 +484,7 @@ export default function GOTMap() {
   }
 
   const openMctsSimulation = (trace: AIDecisionTrace['mcts'], autoClose = false) => {
+    if (!aiVisualsEnabled) return
     if (!trace) return
     setMctsPopupAutoClose(autoClose)
     setMctsPopupTrace(trace)
@@ -502,6 +537,20 @@ export default function GOTMap() {
     }
   }
 
+  const waitForPacedDelay = async (ms: number, autoMode: boolean) => {
+    if (autoMode) {
+      await waitForSimulationProgress(ms)
+      return
+    }
+    await wait(ms)
+  }
+
+  const announceDecisionStep = async (message: string, autoMode: boolean, duration = 1000) => {
+    setDecisionStageBanner(message)
+    await waitForPacedDelay(duration, autoMode)
+    setDecisionStageBanner((current) => (current === message ? null : current))
+  }
+
   const waitForMctsPopupLifecycle = async () => {
     const openWaitDeadline = Date.now() + 1500
     let sawOpen = mctsPopupOpenRef.current
@@ -530,6 +579,12 @@ export default function GOTMap() {
       }
     })
 
+  const waitForBattlePlaybackResume = async () => {
+    while (battlePlaybackPausedRef.current) {
+      await waitForAutoBattleResume()
+    }
+  }
+
   const announceBanner = async (message: string, duration: number) => {
     setTurnBanner(message)
     await waitForSimulationProgress(duration)
@@ -555,6 +610,11 @@ export default function GOTMap() {
   }
 
   const runDecisionVisualization = async (trace: AIDecisionTrace, reason: string, fastMode = false) => {
+    if (!aiVisualsEnabled) {
+      setDecisionPopupOpen(false)
+      return
+    }
+
     const totalSteps = trace.ruleCalculations.length + 4
     const runId = decisionVisualizationRunRef.current + 1
     const stepDelay = fastMode ? AUTO_DECISION_STEP_DELAY_MS : DECISION_STEP_DELAY_MS
@@ -585,6 +645,7 @@ export default function GOTMap() {
   }
 
   const triggerActionCue = (payload: Omit<ActionCue, 'id'>) => {
+    if (!aiVisualsEnabled) return
     const id = ++actionCueIdRef.current
     setActionCue({ id, ...payload })
     setTimeout(() => {
@@ -1297,7 +1358,7 @@ export default function GOTMap() {
     applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house)
   }
 
-  const runAutoMinimaxBattlePlayback = async (sourceId: RegionId, targetId: RegionId) => {
+  const runAutoMinimaxBattlePlayback = async (sourceId: RegionId, targetId: RegionId, autoMode = true) => {
     const attacker = regions[sourceId]
     const defender = regions[targetId]
     const { result, snapshot } = evaluateMinimaxBattle(sourceId, targetId)
@@ -1342,7 +1403,12 @@ export default function GOTMap() {
           resolutionText: `${attacker.house} is committing to ${chosenChild.action}. ${defender.house} will answer next.`,
         })
       }
-      await waitForSimulationProgress(1200)
+      if (!aiVisualsEnabled) {
+        await announceDecisionStep(`Minimax: ${actingHouse} chose ${chosenChild.action} (Round ${currentRound})`, autoMode, 1100)
+      } else {
+        await waitForPacedDelay(1200, autoMode)
+      }
+      await waitForBattlePlaybackResume()
       setBattleMinimaxPopupOpen(false)
 
       triggerActionCue({
@@ -1399,7 +1465,8 @@ export default function GOTMap() {
         setAiSimulationNote(`${actingHouse} chooses ${chosenChild.action}. ${node.nodeType === 'max' ? defender.house : attacker.house} must answer next.`)
       }
 
-      await waitForSimulationProgress(1450)
+      await waitForPacedDelay(1450, autoMode)
+      await waitForBattlePlaybackResume()
       node = chosenChild.next
 
       if (node.nodeType === 'terminal') {
@@ -1407,7 +1474,12 @@ export default function GOTMap() {
         setBattleMinimaxPopupOpen(true)
         setAiSimulationNote(node.title)
         addEvent(node.title)
-        await waitForSimulationProgress(1700)
+        if (!aiVisualsEnabled) {
+          await announceDecisionStep(`Minimax Result: ${node.title}`, autoMode, 1200)
+        } else {
+          await waitForPacedDelay(1700, autoMode)
+        }
+        await waitForBattlePlaybackResume()
         setBattleMinimaxPopupOpen(false)
       }
     }
@@ -1487,18 +1559,57 @@ export default function GOTMap() {
       }
 
       setAiReason(decision.reason)
-      setAiFuzzy(decision.trace.strategic)
-      setAiTree(buildTreeFromTrace(decision.trace))
-      setAiBattleTree(null)
-      await runDecisionVisualization(decision.trace, decision.reason, autoMode)
+      if (aiVisualsEnabled) {
+        setAiFuzzy(decision.trace.strategic)
+        setAiTree(buildTreeFromTrace(decision.trace))
+        setAiBattleTree(null)
+        await runDecisionVisualization(decision.trace, decision.reason, autoMode)
+      } else {
+        setAiFuzzy(null)
+        setAiTree(null)
+        setAiBattleTree(null)
+        setDecisionPopupTrace(null)
+        setDecisionPopupReason(null)
+        setDecisionPopupOpen(false)
+      }
+
+      let summaryMinimax = 'Not used'
+      if (decision.action === 'attack' && decision.trace.attackSourceRegionId && decision.targetId) {
+        const minimaxPreview = evaluateMinimaxBattle(decision.trace.attackSourceRegionId, decision.targetId)
+        summaryMinimax = minimaxPreview.snapshot.bestAction ? formatActionLabel(minimaxPreview.snapshot.bestAction) : 'No action'
+      }
+
+      const summaryMcts = decision.trace.mcts?.selectedLabel ?? 'No target'
+      const summary = {
+        turn,
+        houseLabel: HOUSE_META[currentFaction].label,
+        fuzzyChoice: formatActionLabel(decision.action),
+        mctsChoice: summaryMcts,
+        minimaxChoice: summaryMinimax,
+      }
+      setAiTurnSummary(summary)
+
+      if (!aiVisualsEnabled) {
+        await announceDecisionStep(`Fuzzy Logic chose: ${summary.fuzzyChoice}`, autoMode, 1100)
+        await announceDecisionStep(`MCTS chose: ${summary.mctsChoice}`, autoMode, 1000)
+        await announceDecisionStep(`Minimax chose: ${summary.minimaxChoice}`, autoMode, 1000)
+      }
+
+      if (!aiVisualsEnabled) {
+        addEvent(`Turn ${summary.turn} | ${summary.houseLabel}`)
+        addEvent(`Fuzzy chose: ${summary.fuzzyChoice}`)
+        addEvent(`MCTS chose: ${summary.mctsChoice}`)
+        addEvent(`Minimax chose: ${summary.minimaxChoice}`)
+      }
+
       addEvent('AI Pipeline: fuzzy inputs -> memberships -> rules -> final action.')
       addEvent(`AI: ${decision.reason}`)
       setSelectedRegion(decision.regionId || decision.targetId)
 
       const cueRegionId = decision.regionId || decision.targetId
       if (cueRegionId) {
-        if (decision.trace.mcts) {
-          const waitForMctsCompletion = decision.action === 'attack'
+        if (decision.trace.mcts && aiVisualsEnabled) {
+          const waitForMctsCompletion = decision.action === 'attack' || decision.action === 'reinforce'
           openMctsSimulation(decision.trace.mcts, waitForMctsCompletion)
 
           const attackSourceId = decision.trace.attackSourceRegionId
@@ -1506,11 +1617,15 @@ export default function GOTMap() {
           const attackSource = attackSourceId ? regions[attackSourceId] : null
           const attackTarget = attackTargetId ? regions[attackTargetId] : null
           const mctsMessage =
-            attackSource && attackTarget
+            decision.action === 'reinforce'
+              ? `MCTS selected ${regions[cueRegionId].name} for reinforcement`
+              : attackSource && attackTarget
               ? `${attackSource.house} attacks ${attackTarget.house} at ${attackTarget.name}`
               : `MCTS selected ${decision.trace.mcts.selectedLabel}`
           const mctsDetail =
-            attackSource && attackTarget
+            decision.action === 'reinforce'
+              ? `${decision.trace.mcts.iterations} iterations, rollout depth ${decision.trace.mcts.rolloutDepth}.`
+              : attackSource && attackTarget
               ? `Path: ${attackSource.name} -> ${attackTarget.name} | ${decision.trace.mcts.iterations} iterations, rollout depth ${decision.trace.mcts.rolloutDepth}.`
               : `${decision.trace.mcts.iterations} iterations, rollout depth ${decision.trace.mcts.rolloutDepth}.`
 
@@ -1525,8 +1640,10 @@ export default function GOTMap() {
             detail: mctsDetail,
           })
 
-          if (attackSource && attackTarget) {
+          if (decision.action === 'attack' && attackSource && attackTarget) {
             addEvent(`MCTS confirms attack: ${attackSource.house} -> ${attackTarget.house} at ${attackTarget.name}.`)
+          } else if (decision.action === 'reinforce') {
+            addEvent(`MCTS confirms reinforcement target: ${regions[cueRegionId].name}.`)
           }
 
           const plannerPos = regions[cueRegionId].tokenPosition
@@ -1534,17 +1651,31 @@ export default function GOTMap() {
           if (waitForMctsCompletion) {
             await waitForMctsPopupLifecycle()
 
-            triggerActionCue({
-              algorithmTag: 'minimax',
-              action: 'attack',
-              houseId: currentFaction,
-              houseLabel: HOUSE_META[currentFaction].label,
-              primaryRegionId: cueRegionId,
-              targetRegionId: decision.targetId || undefined,
-              message: 'MCTS complete. Proceeding to Minimax battle resolution.',
-            })
+            if (decision.action === 'attack') {
+              triggerActionCue({
+                algorithmTag: 'minimax',
+                action: 'attack',
+                houseId: currentFaction,
+                houseLabel: HOUSE_META[currentFaction].label,
+                primaryRegionId: cueRegionId,
+                targetRegionId: decision.targetId || undefined,
+                message: 'MCTS complete. Proceeding to Minimax battle resolution.',
+              })
 
-            addEvent('MCTS playback complete. Proceeding to minimax battle resolution.')
+              addEvent('MCTS playback complete. Proceeding to minimax battle resolution.')
+            } else {
+              triggerActionCue({
+                algorithmTag: 'mcts',
+                action: 'reinforce',
+                houseId: currentFaction,
+                houseLabel: HOUSE_META[currentFaction].label,
+                primaryRegionId: cueRegionId,
+                message: 'MCTS complete. Proceeding to reinforcement.',
+                detail: `Reinforcement will be applied to ${regions[cueRegionId].name}.`,
+              })
+
+              addEvent(`MCTS playback complete. Proceeding to reinforce ${regions[cueRegionId].name}.`)
+            }
 
             if (autoMode) {
               await waitForSimulationProgress(420)
@@ -1556,9 +1687,11 @@ export default function GOTMap() {
           } else {
             await wait(950)
           }
+        } else if (decision.trace.mcts) {
+          addEvent(`MCTS selected ${decision.trace.mcts.selectedLabel} (${decision.trace.mcts.iterations} rollouts).`)
         }
 
-        if (decision.action !== 'attack') {
+        if (decision.action !== 'attack' && !(decision.action === 'reinforce' && decision.trace.mcts)) {
           const cueMessage =
             decision.action === 'defend'
               ? `${HOUSE_META[currentFaction].label} intends to defend ${regions[cueRegionId].name}`
@@ -1592,10 +1725,18 @@ export default function GOTMap() {
 
       if (decision.action === 'attack') {
         if (decision.trace.attackSourceRegionId && decision.targetId) {
-          if (autoMode) {
-            await runAutoCinematicAttack(decision.trace.attackSourceRegionId, decision.targetId)
+          if (!aiVisualsEnabled) {
+            // Summary mode: set up cinematic state but skip decision popups
+            setAttackSource(decision.trace.attackSourceRegionId)
+            await launchAttackSequence(decision.trace.attackSourceRegionId, decision.targetId, autoMode, false)
+            setDecisionPopupOpen(false)
+            await wait(80)
+            await runAutoMinimaxBattlePlayback(decision.trace.attackSourceRegionId, decision.targetId, autoMode)
+            await announceBanner('Battle complete. Simulation resumes...', SIMULATION_RESUME_BANNER_MS)
+            await waitForSimulationProgress(AUTO_SIMULATION_RESULT_PAUSE_MS)
+            closeBattleModal()
           } else {
-            await resolveMinimaxBattle(decision.trace.attackSourceRegionId, decision.targetId, false)
+            await runAutoCinematicAttack(decision.trace.attackSourceRegionId, decision.targetId)
           }
         } else {
           setHasActedThisTurn(true)
@@ -1622,11 +1763,18 @@ export default function GOTMap() {
     }
   }
 
-  const startAutoSimulation = () => {
+  const startAutoSimulation = (mode?: Exclude<SimulationDisplayMode, null>) => {
     const isResume = hasSimulationStarted
+    const resolvedMode = mode ?? simulationDisplayMode ?? 'visual'
+    setSimulationDisplayMode(resolvedMode)
     setHasSimulationStarted(true)
     setIsAutoSimulating(true)
-    addEvent(isResume ? 'Auto simulation resumed.' : 'Auto simulation started: AI council now controls all houses.')
+    setBattlePlaybackPaused(false)
+    addEvent(
+      isResume
+        ? `Auto simulation resumed (${resolvedMode === 'summary' ? 'summary mode' : 'visual mode'}).`
+        : `Auto simulation started in ${resolvedMode === 'summary' ? 'summary' : 'visual'} mode.`
+    )
 
     if (pendingAutoBattleResumeRef.current) {
       pendingAutoBattleResumeRef.current()
@@ -1635,12 +1783,14 @@ export default function GOTMap() {
 
   const stopAutoSimulation = () => {
     setIsAutoSimulating(false)
+    setBattlePlaybackPaused(true)
     addEvent('Auto simulation paused.')
   }
 
   useEffect(() => {
     if (!fullControlWinner) return
     setIsAutoSimulating(false)
+    setShowVictoryCelebration(true)
     addEvent(`Throne victory declared: ${HOUSE_META[fullControlWinner].label} reached ${THRONE_REGION_WIN_THRESHOLD} regions and wins the game.`)
   }, [fullControlWinner])
 
@@ -1777,18 +1927,8 @@ export default function GOTMap() {
         className={`map-container ${isCinematicActive ? 'is-cinematic' : ''} ${battlePhase === 'impact' ? 'is-impact' : ''}`}
       >
         {turnBanner ? <div className="turn-banner">{turnBanner}</div> : null}
-        <div className="algorithm-spotlight" aria-live="polite">
-          {algorithmSpotlight.map((stage) => (
-            <div
-              key={stage.key}
-              className={`algorithm-spotlight-card algorithm-spotlight-card-${stage.key} is-${stage.status}`}
-            >
-              <p className="algorithm-spotlight-label">{stage.label}</p>
-              <p className="algorithm-spotlight-summary">{stage.summary}</p>
-            </div>
-          ))}
-        </div>
-        {actionCue ? (
+        {decisionStageBanner ? <div className="decision-stage-banner">{decisionStageBanner}</div> : null}
+        {aiVisualsEnabled && actionCue ? (
           <div
             className={`action-cue action-cue-${actionCue.action}`}
             style={{ ['--cue-color' as string]: HOUSE_META[actionCue.houseId].color }}
@@ -1802,7 +1942,7 @@ export default function GOTMap() {
             {actionCue.detail ? <p className="action-cue-detail">{actionCue.detail}</p> : null}
           </div>
         ) : null}
-        {simulationPhase === 'battle' && battleStepSummary ? (
+        {aiVisualsEnabled && simulationPhase === 'battle' && battleStepSummary ? (
           <div className="battle-turn-hud" aria-live="polite">
             <p className="battle-turn-hud-round">Round {battleStepSummary.round}</p>
             <p className="battle-turn-hud-line">
@@ -1872,6 +2012,28 @@ export default function GOTMap() {
           />
         ) : null}
 
+        <div className="banner-layer" aria-hidden>
+          {availableRegions.map((regionId) => {
+            const territory = regions[regionId]
+            const previousOwner = bannerTransitions[regionId]
+            const isChanging = Boolean(previousOwner && previousOwner !== territory.houseId)
+
+            return (
+              <RegionBannerToken
+                key={`banner-${regionId}`}
+                x={territory.tokenPosition.x}
+                y={territory.tokenPosition.y}
+                houseId={territory.houseId}
+                houseColor={HOUSE_META[territory.houseId].color}
+                houseLabel={territory.house}
+                bannerSrc={HOUSE_BANNER_IMAGE[territory.houseId]}
+                previousBannerSrc={previousOwner ? HOUSE_BANNER_IMAGE[previousOwner] : undefined}
+                isChanging={isChanging}
+              />
+            )
+          })}
+        </div>
+
         <div className="token-layer" aria-hidden={false}>
           {actionCue ? (
             <>
@@ -1928,62 +2090,9 @@ export default function GOTMap() {
         </div>
       </div>
 
-      <aside className="region-panel" aria-live="polite">
-        {lastOwnershipChange ? (
-          <div className="winner-banner">
-            <p className="winner-title">Last Ownership Change</p>
-            <p className="winner-reason">{lastOwnershipChange}</p>
-          </div>
-        ) : null}
-
-        <div className="panel-actions">
-          <button type="button" className="panel-btn panel-btn-featured" onClick={runFeaturedBattle} disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}>
-            Demo: North attacks Riverlands
-          </button>
-          <button
-            type="button"
-            className="panel-btn panel-btn-featured"
-            onClick={runDirectMinimaxDemo}
-            disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
-          >
-            Demo: Targaryen vs Lannister
-          </button>
-          <button
-            type="button"
-            className="panel-btn panel-btn-featured"
-            onClick={runAISmokeTest}
-            disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
-          >
-            Run AI Smoke Test
-          </button>
-          <button
-            type="button"
-            className="panel-btn"
-            onClick={() => void handleAITakeAction()}
-            disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}
-          >
-            AI Take Action
-          </button>
-          <button
-            type="button"
-            className="panel-btn"
-            onClick={isAutoSimulating ? stopAutoSimulation : startAutoSimulation}
-            disabled={Boolean(fullControlWinner)}
-          >
-            {isAutoSimulating ? 'Pause Simulation' : hasSimulationStarted ? 'Resume Simulation' : 'Start Simulation'}
-          </button>
-          <button
-            type="button"
-            className="panel-btn panel-btn-endturn"
-            onClick={handleEndTurn}
-            disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
-          >
-            End {HOUSE_META[currentFaction].label}'s Turn
-          </button>
-        </div>
-
+      <aside className={`region-panel ${!hasSimulationStarted ? 'region-panel-prelaunch' : ''}`} aria-live="polite">
         {leaderBoard.leaderHouse || leaderBoard.leaderReason ? (
-          <div className="winner-banner">
+          <div className="winner-banner winner-banner-compact">
             <p className="winner-title">
               {fullControlWinner
                 ? `Throne Winner: ${HOUSE_META[fullControlWinner].label}`
@@ -1998,6 +2107,56 @@ export default function GOTMap() {
             </p>
           </div>
         ) : null}
+
+        {!hasSimulationStarted ? (
+          <div className="panel-launch-actions">
+            <button
+              type="button"
+              className="panel-btn panel-btn-featured"
+              onClick={() => startAutoSimulation('visual')}
+              disabled={Boolean(fullControlWinner)}
+            >
+              Start Visual Mode
+            </button>
+            <button
+              type="button"
+              className="panel-btn panel-btn-featured"
+              onClick={() => startAutoSimulation('summary')}
+              disabled={Boolean(fullControlWinner)}
+            >
+              Start Summary Mode
+            </button>
+          </div>
+        ) : (
+          <div className="panel-actions panel-actions-primary">
+            <button
+              type="button"
+              className="panel-btn"
+              onClick={() => void handleAITakeAction()}
+              disabled={isBattleModalOpen || isResolvingBattle || hasActedThisTurn || isAutoSimulating}
+            >
+              AI Take Action
+            </button>
+            <button
+              type="button"
+              className="panel-btn"
+              onClick={isAutoSimulating ? stopAutoSimulation : () => startAutoSimulation()}
+              disabled={Boolean(fullControlWinner)}
+            >
+              {isAutoSimulating
+                ? 'Pause Simulation'
+                : `Resume Simulation (${simulationDisplayMode === 'summary' ? 'Summary' : 'Visual'} Mode)`}
+            </button>
+            <button
+              type="button"
+              className="panel-btn panel-btn-endturn"
+              onClick={handleEndTurn}
+              disabled={isBattleModalOpen || isResolvingBattle || isAutoSimulating}
+            >
+              End {HOUSE_META[currentFaction].label}'s Turn
+            </button>
+          </div>
+        )}
 
         <div className="ownership-board">
           <p className="ownership-board-title">Realm Ownership</p>
@@ -2014,7 +2173,14 @@ export default function GOTMap() {
           </div>
         </div>
 
-        {simulationPhase === 'battle' && battleStepSummary ? (
+        {hasSimulationStarted && lastOwnershipChange ? (
+          <div className="winner-banner">
+            <p className="winner-title">Last Ownership Change</p>
+            <p className="winner-reason">{lastOwnershipChange}</p>
+          </div>
+        ) : null}
+
+        {hasSimulationStarted && aiVisualsEnabled && simulationPhase === 'battle' && battleStepSummary ? (
           <div className="battle-step-banner">
             <p className="battle-step-title">Battle Round {battleStepSummary.round}</p>
             <p className="battle-step-line">
@@ -2030,18 +2196,26 @@ export default function GOTMap() {
           </div>
         ) : null}
 
-        <AIDecisionPanel
-          activeHouseLabel={HOUSE_META[currentFaction].label}
-          turn={turn}
-          fuzzy={simulationPhase === 'battle' ? null : aiFuzzy}
-          tree={simulationPhase === 'battle' ? null : aiTree}
-          trace={simulationPhase === 'battle' ? null : decisionPopupTrace}
-          mctsTrace={simulationPhase === 'battle' ? null : liveMctsTrace}
-          battleTree={aiBattleTree}
-          finalReason={aiReason}
-          simulationNote={aiSimulationNote}
-          onOpenMctsSimulation={liveMctsTrace ? () => openMctsSimulation(liveMctsTrace) : undefined}
-        />
+        {hasSimulationStarted && aiVisualsEnabled ? (
+          <AIDecisionPanel
+            activeHouseLabel={HOUSE_META[currentFaction].label}
+            turn={turn}
+            fuzzy={simulationPhase === 'battle' ? null : aiFuzzy}
+            tree={simulationPhase === 'battle' ? null : aiTree}
+            trace={simulationPhase === 'battle' ? null : decisionPopupTrace}
+            mctsTrace={simulationPhase === 'battle' ? null : liveMctsTrace}
+            battleTree={aiBattleTree}
+            finalReason={aiReason}
+            simulationNote={aiSimulationNote}
+            onOpenMctsSimulation={liveMctsTrace ? () => openMctsSimulation(liveMctsTrace) : undefined}
+          />
+        ) : (
+          <div className="ai-panel ai-panel-compact">
+            <h3>War Council AI</h3>
+            <p className="ai-panel-meta">Ready to begin a simulation</p>
+            <p className="ai-panel-compact-note">Choose a start mode above to reveal the live AI decision breakdown.</p>
+          </div>
+        )}
 
         {selectedData ? (
           <>
@@ -2145,7 +2319,7 @@ export default function GOTMap() {
           </>
         )}
 
-        <EventLog entries={eventLog} />
+        {hasSimulationStarted ? <EventLog entries={eventLog} /> : null}
       </aside>
 
       {battleContext ? (
@@ -2182,7 +2356,7 @@ export default function GOTMap() {
       ) : null}
 
       <AIDecisionPopup
-        open={decisionPopupOpen && simulationPhase !== 'battle'}
+        open={aiVisualsEnabled && decisionPopupOpen && simulationPhase !== 'battle'}
         turn={turn}
         houseLabel={decisionPopupHouseLabel}
         trace={decisionPopupTrace}
@@ -2194,7 +2368,7 @@ export default function GOTMap() {
         onClose={closeDecisionPopup}
       />
       <BattleMinimaxPopup
-        open={battleMinimaxPopupOpen}
+        open={aiVisualsEnabled && battleMinimaxPopupOpen}
         battleTree={aiBattleTree}
         focusedPath={battlePlaybackPath}
         simulationRunning={isAutoSimulating}
@@ -2204,10 +2378,16 @@ export default function GOTMap() {
         onClose={() => setBattleMinimaxPopupOpen(false)}
       />
       <MCTSPlanningPopup
-        open={mctsPopupOpen}
+        open={aiVisualsEnabled && mctsPopupOpen}
         trace={mctsPopupTrace ?? null}
         autoCloseAfterPlayback={mctsPopupAutoClose}
         onClose={closeMctsSimulation}
+      />
+      <VictoryCelebrationModal
+        open={Boolean(fullControlWinner) && showVictoryCelebration}
+        winnerLabel={fullControlWinner ? HOUSE_META[fullControlWinner].label : 'Realm Champion'}
+        winnerColor={fullControlWinner ? HOUSE_META[fullControlWinner].color : '#f2d7a8'}
+        onClose={() => setShowVictoryCelebration(false)}
       />
       </div>
     </>
