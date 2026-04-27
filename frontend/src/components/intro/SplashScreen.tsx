@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import { motion } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { CSSProperties } from 'react'
 import styles from './SplashScreen.module.css'
@@ -18,6 +18,9 @@ const HOUSES = [
   'House Tyrell',
 ]
 const REVEAL_IMAGE = '/images/ui/got-main-splash.png'
+const THEME_AUDIO = '/sound/8d82b5_Game_of_Thrones_Theme_Song.mp3'
+const THEME_START_TIME = 27
+const THEME_VOLUME = 0.62
 
 type RevealPiece = {
   id: string
@@ -60,10 +63,78 @@ const REVEAL_PIECES: RevealPiece[] = Array.from(
 
 export default function SplashScreen() {
   const [exiting, setExiting] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const fadeTimerRef = useRef<number | null>(null)
   const router = useRouter()
+
+  useEffect(() => {
+    const audio = new Audio(THEME_AUDIO)
+    audioRef.current = audio
+    audio.preload = 'auto'
+    audio.volume = THEME_VOLUME
+
+    const seekToThemeStart = () => {
+      if (audio.currentTime < THEME_START_TIME) {
+        audio.currentTime = THEME_START_TIME
+      }
+    }
+
+    const playTheme = () => {
+      seekToThemeStart()
+      audio.play().catch(() => {
+        // Browsers can block sound until the first user gesture.
+      })
+    }
+
+    const handleCanPlay = () => {
+      seekToThemeStart()
+    }
+
+    const handleEnded = () => {
+      audio.currentTime = THEME_START_TIME
+      playTheme()
+    }
+
+    audio.addEventListener('loadedmetadata', handleCanPlay)
+    audio.addEventListener('ended', handleEnded)
+    playTheme()
+
+    window.addEventListener('pointerdown', playTheme, { once: true })
+    window.addEventListener('keydown', playTheme, { once: true })
+
+    return () => {
+      if (fadeTimerRef.current) {
+        window.clearInterval(fadeTimerRef.current)
+      }
+      window.removeEventListener('pointerdown', playTheme)
+      window.removeEventListener('keydown', playTheme)
+      audio.removeEventListener('loadedmetadata', handleCanPlay)
+      audio.removeEventListener('ended', handleEnded)
+      audio.pause()
+      audioRef.current = null
+    }
+  }, [])
 
   const handleEnter = () => {
     setExiting(true)
+    const audio = audioRef.current
+
+    if (audio && !audio.paused) {
+      const fadeStep = audio.volume / 18
+
+      fadeTimerRef.current = window.setInterval(() => {
+        audio.volume = Math.max(0, audio.volume - fadeStep)
+
+        if (audio.volume <= 0.02) {
+          if (fadeTimerRef.current) {
+            window.clearInterval(fadeTimerRef.current)
+            fadeTimerRef.current = null
+          }
+          audio.pause()
+        }
+      }, 45)
+    }
+
     setTimeout(() => router.push('/realm'), 900)
   }
 

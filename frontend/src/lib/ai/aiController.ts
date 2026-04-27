@@ -2,6 +2,7 @@ import type { RegionId } from '@/assets/mapPaths'
 import type { RegionInfo } from '@/data/regionData'
 import type { AIInputState, AIDecision, CandidateAction, HouseTraitProfile, PlayableHouseId } from './types'
 import { evaluateFuzzyStrategic } from './fuzzyLogic'
+import { planWithMCTS } from './mctsPlanner'
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
@@ -19,7 +20,6 @@ const REGION_IMPORTANCE_BONUS: Partial<Record<RegionId, number>> = {
   reach: 8,
   westerlands: 8,
   essos: 10,
-  braavos: 7,
   north: 6,
 }
 
@@ -37,7 +37,6 @@ function buildFrontier(input: AIInputState) {
       .filter(({ targetId }) => {
         const owner = regions[targetId].houseId
         if (owner === house) return false
-        if (owner === 'neutral') return true
         return diplomacy[house][owner] === 'hostile'
       })
   )
@@ -58,8 +57,7 @@ function buildFuzzyInputs(input: AIInputState) {
 
   const frontierThreats = hostileOrNeutralNeighbors.map(({ targetId }) => {
     const target = regions[targetId]
-    const relationWeight =
-      target.houseId === 'neutral' || target.houseId === house ? 1 : diplomacy[house][target.houseId] === 'hostile' ? 1.15 : 1
+    const relationWeight = target.houseId === house ? 1 : diplomacy[house][target.houseId] === 'hostile' ? 1.15 : 1
 
     // Simple frontier pressure: nearby army plus defense.
     return clamp((target.army + target.defense) * relationWeight, 0, 100)
@@ -151,11 +149,18 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
   })
 
   const selected = affordableCandidates[0] || evaluation.candidates[0]
-  const focusRegionId = fuzzyInputs.focusOwnedRegion?.regionId || fuzzyInputs.focusTarget?.sourceId || null
+
+  const mctsPlan = selected.action === 'attack' || selected.action === 'reinforce' ? planWithMCTS(input, selected.action) : null
+
+  const fallbackFocusRegionId = fuzzyInputs.focusOwnedRegion?.regionId || fuzzyInputs.focusTarget?.sourceId || null
+  const focusRegionId =
+    selected.action === 'attack'
+      ? mctsPlan?.regionId || fuzzyInputs.focusTarget?.sourceId || fallbackFocusRegionId
+      : mctsPlan?.regionId || fallbackFocusRegionId
   const focusRegionName = focusRegionId ? input.regions[focusRegionId].name : null
-  const attackSourceRegionId = selected.action === 'attack' ? fuzzyInputs.focusTarget?.sourceId || null : null
+  const attackSourceRegionId = selected.action === 'attack' ? mctsPlan?.regionId || fuzzyInputs.focusTarget?.sourceId || null : null
   const attackSourceRegionName = attackSourceRegionId ? input.regions[attackSourceRegionId].name : null
-  const targetRegionId = selected.action === 'attack' ? fuzzyInputs.focusTarget?.targetId || null : null
+  const targetRegionId = selected.action === 'attack' ? mctsPlan?.targetId || fuzzyInputs.focusTarget?.targetId || null : null
   const targetRegionName = targetRegionId ? input.regions[targetRegionId].name : null
   const finalDecisionLabel =
     selected.action === 'attack' && targetRegionName
@@ -169,10 +174,14 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
             : selected.label
 
   return {
-    action: selected.action,
-    regionId: focusRegionId,
-    targetId: targetRegionId,
-    reason: buildReason(input.house, selected.action, targetRegionName || focusRegionName),
+      action: selected.action,
+      regionId: focusRegionId,
+      targetId: targetRegionId,
+    reason:
+      buildReason(input.house, selected.action, targetRegionName || focusRegionName) +
+      (mctsPlan
+        ? ` MCTS selected ${mctsPlan.trace.selectedLabel} as the strongest concrete option.`
+        : ''),
     trace: {
       inputs: {
         ownStrength: fuzzyInputs.ownStrength,
@@ -193,6 +202,7 @@ export function pickAIDecision(input: AIInputState): AIDecision | null {
       attackSourceRegionName,
       targetRegionId,
       targetRegionName,
+      mcts: mctsPlan?.trace ?? null,
       finalDecisionLabel,
     },
   }

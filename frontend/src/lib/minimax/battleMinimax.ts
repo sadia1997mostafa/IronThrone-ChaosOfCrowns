@@ -1,5 +1,6 @@
 export const BATTLE_LOSS_PERCENT = 50
 const MAX_BATTLE_TURNS_SAFETY = 20
+const MIN_TURN_NUMBER_FOR_WITHDRAW = 3
 const WITHDRAW_LOSS_PERCENT = 0.05
 const CRITICAL_ARMY_PENALTY = 30
 const VOLUNTARY_WITHDRAW_PENALTY = 5
@@ -35,6 +36,7 @@ type MinimaxResult = {
   bestAction: BattleAction | null
   trace: string[]
   tree: MinimaxTraceNode
+  terminalState: BattleState
 }
 
 type RootActionSummary = {
@@ -58,6 +60,14 @@ export type MinimaxTraceNode = {
 }
 
 const ALL_ACTIONS: BattleAction[] = [BattleAction.Attack, BattleAction.Guard, BattleAction.Withdraw]
+
+function legalActionsForState(state: BattleState) {
+  if (state.turn_number < MIN_TURN_NUMBER_FOR_WITHDRAW) {
+    return [BattleAction.Attack, BattleAction.Guard]
+  }
+
+  return ALL_ACTIONS
+}
 
 export function createBattleState(input: {
   attacker_name: string
@@ -313,16 +323,18 @@ function minimax(state: BattleState, depth = 0): MinimaxResult {
         `${indent}Leaf score: ${score}`,
       ],
       tree,
+      terminalState: state,
     }
   }
 
   if (state.current_turn_player === 'max') {
     let bestScore = Number.NEGATIVE_INFINITY
     let bestAction: BattleAction | null = null
+    let bestTerminalState: BattleState | null = null
     const trace: string[] = [`${indent}Max node starts with ${describeState(state)}`]
     const children: MinimaxTraceNode['children'] = []
 
-    for (const action of ALL_ACTIONS) {
+    for (const action of legalActionsForState(state)) {
       trace.push(`${indent}${depth === 0 ? 'Root action' : 'Max considers'}: ${action}`)
 
       let nextState: BattleState
@@ -345,6 +357,7 @@ function minimax(state: BattleState, depth = 0): MinimaxResult {
       if (result.score > bestScore) {
         bestScore = result.score
         bestAction = action
+        bestTerminalState = result.terminalState
       }
 
       children.push({
@@ -368,16 +381,23 @@ function minimax(state: BattleState, depth = 0): MinimaxResult {
       })),
     }
     trace.push(`${indent}Max node chose ${bestAction} with score ${bestScore}`)
-    return { score: bestScore, bestAction, trace, tree }
+    return {
+      score: bestScore,
+      bestAction,
+      trace,
+      tree,
+      terminalState: bestTerminalState ?? state,
+    }
   }
 
   const attackerAction = state.pending_attacker_action
   const trace: string[] = [`${indent}Min node responds to attacker action ${attackerAction}`]
   let bestScore = Number.POSITIVE_INFINITY
   let bestAction: BattleAction | null = null
+  let bestTerminalState: BattleState | null = null
   const children: MinimaxTraceNode['children'] = []
 
-  for (const defenderAction of ALL_ACTIONS) {
+  for (const defenderAction of legalActionsForState(state)) {
     trace.push(`${indent}Opponent reply: ${defenderAction}`)
 
     const nextState =
@@ -393,6 +413,7 @@ function minimax(state: BattleState, depth = 0): MinimaxResult {
     if (result.score < bestScore) {
       bestScore = result.score
       bestAction = defenderAction
+      bestTerminalState = result.terminalState
     }
 
     children.push({
@@ -416,7 +437,13 @@ function minimax(state: BattleState, depth = 0): MinimaxResult {
     })),
   }
   trace.push(`${indent}Min node chose ${bestAction} with score ${bestScore}`)
-  return { score: bestScore, bestAction, trace, tree }
+  return {
+    score: bestScore,
+    bestAction,
+    trace,
+    tree,
+    terminalState: bestTerminalState ?? state,
+  }
 }
 
 export function chooseBestMove(state: BattleState) {
@@ -426,6 +453,7 @@ export function chooseBestMove(state: BattleState) {
     score: result.score,
     debugOutput: result.trace.join('\n'),
     tree: result.tree,
+    finalState: result.terminalState,
   }
 }
 
@@ -449,7 +477,7 @@ function buildDemoBlock(title: string, state: BattleState) {
 function summarizeRootActions(state: BattleState): RootActionSummary[] {
   const rootState: BattleState = { ...state, current_turn_player: 'max', pending_attacker_action: null }
 
-  return ALL_ACTIONS.map((action) => {
+  return legalActionsForState(rootState).map((action) => {
     if (action === BattleAction.Withdraw) {
       return {
         action,

@@ -46,9 +46,11 @@ type AIDecisionPanelProps = {
   fuzzy: FuzzyStrategicOutput | null
   tree: AIDecisionTreeSnapshot | null
   trace?: AIDecisionTrace | null
+  mctsTrace?: AIDecisionTrace['mcts'] | null
   battleTree?: AIBattleTreeSnapshot | null
   finalReason: string | null
   simulationNote?: string | null
+  onOpenMctsSimulation?: () => void
 }
 
 function DesireRow({ label, value }: { label: string; value: number }) {
@@ -62,6 +64,35 @@ function DesireRow({ label, value }: { label: string; value: number }) {
         <div className="ai-desire-fill" style={{ width: `${Math.max(4, Math.min(100, value))}%` }} />
       </div>
     </div>
+  )
+}
+
+function MctsCandidateRow({
+  candidate,
+}: {
+  candidate: {
+    label: string
+    visits: number
+    averageScore: number
+    chosen?: boolean
+  }
+}) {
+  const barWidth = Math.max(8, Math.min(100, candidate.averageScore))
+
+  return (
+    <li className={candidate.chosen ? 'is-chosen' : ''}>
+      <div className="mcts-candidate-head">
+        <span>{candidate.label}</span>
+        <strong>{candidate.visits} visits</strong>
+      </div>
+      <div className="mcts-candidate-meter" aria-hidden>
+        <div className="mcts-candidate-meter-fill" style={{ width: `${barWidth}%` }} />
+      </div>
+      <div className="mcts-candidate-foot">
+        <span>Avg {candidate.averageScore.toFixed(2)}</span>
+        {candidate.chosen ? <strong>Chosen</strong> : null}
+      </div>
+    </li>
   )
 }
 
@@ -99,9 +130,11 @@ export default function AIDecisionPanel({
   fuzzy,
   tree,
   trace,
+  mctsTrace,
   battleTree,
   finalReason,
   simulationNote,
+  onOpenMctsSimulation,
 }: AIDecisionPanelProps) {
   if (!fuzzy && !battleTree) {
     return (
@@ -170,6 +203,44 @@ export default function AIDecisionPanel({
           {trace?.focusRegionName ? <p className="ai-tree-line">Focus Region: {trace.focusRegionName}</p> : null}
           {trace?.attackSourceRegionName ? <p className="ai-tree-line">Attack Source: {trace.attackSourceRegionName}</p> : null}
           {trace?.targetRegionName ? <p className="ai-tree-line">Target Region: {trace.targetRegionName}</p> : null}
+        </div>
+      ) : null}
+
+      {(mctsTrace || trace?.mcts) ? (
+        <div className="ai-section">
+          <p className="ai-section-title">MCTS Planner</p>
+          <p className="ai-tree-line">
+            Selected: {(mctsTrace || trace?.mcts)?.selectedLabel} ({(mctsTrace || trace?.mcts)?.iterations} iterations, rollout depth {(mctsTrace || trace?.mcts)?.rolloutDepth}, exploration {(mctsTrace || trace?.mcts)?.exploration})
+          </p>
+          <p className="ai-tree-line">Selected average score: {(mctsTrace || trace?.mcts)?.selectedAverageScore.toFixed(2)}</p>
+          {onOpenMctsSimulation ? (
+            <button type="button" className="ai-tree-open-button" onClick={onOpenMctsSimulation}>
+              Open MCTS Simulation
+            </button>
+          ) : null}
+
+          <div className="mcts-iteration-log">
+            {(mctsTrace || trace?.mcts)?.iterationLog.map((step) => (
+              <article key={step.iteration} className="mcts-iteration-card">
+                <div className="mcts-iteration-head">
+                  <span>Iteration {step.iteration}</span>
+                  <strong>Rollout {step.rolloutScore.toFixed(2)}</strong>
+                </div>
+                <p className="mcts-iteration-line">
+                  Selected {step.selectedLabel} | visits before {step.selectedVisitsBefore} | avg before {step.selectedAverageBefore.toFixed(2)}
+                </p>
+                <p className="mcts-iteration-line">
+                  Best now {step.bestLabelAfter} at {step.bestAverageAfter.toFixed(2)}
+                </p>
+              </article>
+            ))}
+          </div>
+
+          <ul className="ai-tree-list ai-tree-candidates-list mcts-candidate-list">
+            {(mctsTrace || trace?.mcts)?.candidates.map((candidate) => (
+              <MctsCandidateRow key={candidate.label} candidate={candidate} />
+            ))}
+          </ul>
         </div>
       ) : null}
 

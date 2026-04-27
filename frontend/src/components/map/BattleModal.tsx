@@ -1,4 +1,5 @@
 import type { RegionId } from '@/assets/mapPaths'
+import type { BattleAction } from '@/lib/minimax/battleMinimax'
 
 type BattleSide = {
   id: RegionId
@@ -17,6 +18,8 @@ type BattleModalProps = {
   defender: BattleSide
   defenderDefense: number
   winChance: number
+  projectedAction?: BattleAction | null
+  projectedScore?: number | null
   resolving: boolean
   resultText: string | null
   onResolve: () => void
@@ -30,6 +33,8 @@ export default function BattleModal({
   defender,
   defenderDefense,
   winChance,
+  projectedAction,
+  projectedScore,
   resolving,
   resultText,
   onResolve,
@@ -52,6 +57,13 @@ export default function BattleModal({
           <span>Defense Rating {defenderDefense}</span>
           <span>Victory Probability {Math.round(winChance * 100)}%</span>
         </div>
+
+        {projectedAction ? (
+          <p className="battle-result-banner">
+            Minimax projects: {projectedAction}
+            {typeof projectedScore === 'number' ? ` (score ${projectedScore})` : ''}
+          </p>
+        ) : null}
 
         {resultText ? <p className="battle-result-banner">{resultText}</p> : null}
 

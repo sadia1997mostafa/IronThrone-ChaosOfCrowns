@@ -2,7 +2,7 @@
 
 import type { HouseId } from '@/data/regionData'
 
-type PlayableHouseId = Exclude<HouseId, 'neutral'>
+type PlayableHouseId = HouseId
 
 type SimulationBarProps = {
   turn: number

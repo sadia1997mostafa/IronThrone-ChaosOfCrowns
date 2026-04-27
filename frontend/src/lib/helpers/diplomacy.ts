@@ -1,6 +1,6 @@
 import type { HouseId } from '@/data/regionData'
 
-type PlayableHouseId = Exclude<HouseId, 'neutral'>
+type PlayableHouseId = HouseId
 
 export type RelationState = 'allied' | 'neutral' | 'hostile'
 export type DiplomacyMatrix = Record<PlayableHouseId, Record<PlayableHouseId, RelationState>>

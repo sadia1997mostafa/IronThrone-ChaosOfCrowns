@@ -1,7 +1,7 @@
 import type { RegionId } from '@/assets/mapPaths'
 import type { HouseId, RegionInfo } from '@/data/regionData'
 
-export type PlayableHouseId = Exclude<HouseId, 'neutral'>
+export type PlayableHouseId = HouseId
 export type DiplomacyState = 'allied' | 'neutral' | 'hostile'
 export type AILinguisticLevel = 'Low' | 'Medium' | 'High'
 export type AIActionType = 'attack' | 'defend' | 'hold' | 'reinforce'
@@ -110,6 +110,7 @@ export type AIDecisionTrace = {
   attackSourceRegionName: string | null
   targetRegionId: RegionId | null
   targetRegionName: string | null
+  mcts?: MCTSPlanningTrace | null
   finalDecisionLabel: string
 }
 
@@ -119,4 +120,36 @@ export type AIDecision = {
   targetId: RegionId | null
   reason: string
   trace: AIDecisionTrace
+}
+
+export type MCTSCandidateStat = {
+  label: string
+  regionId: RegionId | null
+  regionName: string | null
+  targetId: RegionId | null
+  targetName: string | null
+  visits: number
+  averageScore: number
+  chosen: boolean
+}
+
+export type MCTSIterationTrace = {
+  iteration: number
+  selectedLabel: string
+  selectedVisitsBefore: number
+  selectedAverageBefore: number
+  rolloutScore: number
+  bestLabelAfter: string
+  bestAverageAfter: number
+  candidateSnapshots: MCTSCandidateStat[]
+}
+
+export type MCTSPlanningTrace = {
+  iterations: number
+  rolloutDepth: number
+  exploration: number
+  selectedLabel: string
+  selectedAverageScore: number
+  candidates: MCTSCandidateStat[]
+  iterationLog: MCTSIterationTrace[]
 }

@@ -569,7 +569,7 @@ function Stage() {
           startDelay={1.0}
         />
         <FloatingAsset
-          url="/models/game_of_thrones_wildlings_dagger.glb"
+          url="/models/sword1.glb"
           position={[-3.2, 3.35, 3.25]}
           rotation={[0.62, -0.34, -1.18]}
           targetSize={0.9}
@@ -578,7 +578,7 @@ function Stage() {
           startDelay={1.55}
         />
         <FloatingAsset
-          url="/models/game_of_thrones_wildlings_dagger.glb"
+          url="/models/sword2.glb"
           position={[3.2, 3.35, 3.25]}
           rotation={[0.62, 0.34, 1.18]}
           targetSize={0.9}
@@ -614,7 +614,8 @@ function Stage() {
 
 useGLTF.preload('/models/iron_throne_from_game_of_thrones.glb')
 useGLTF.preload('/models/game_of_thrones_astrolabe.glb')
-useGLTF.preload('/models/game_of_thrones_wildlings_dagger.glb')
+useGLTF.preload('/models/sword1.glb')
+useGLTF.preload('/models/sword2.glb')
 
 export default function ThroneScene3D() {
   return (
