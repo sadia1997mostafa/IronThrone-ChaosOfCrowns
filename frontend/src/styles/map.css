@@ -148,6 +148,24 @@
   pointer-events: none;
 }
 
+.map-container.is-cinematic .action-cue {
+  top: auto;
+  right: 18px;
+  bottom: 18px;
+  z-index: 58;
+}
+
+.map-container.is-cinematic .decision-stage-banner {
+  top: auto;
+  bottom: 18px;
+  z-index: 57;
+  width: min(620px, 58vw);
+  transform: translateX(-50%);
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: clamp(0.78rem, 1.1vw, 0.96rem);
+}
+
 .action-cue-eyebrow {
   margin: 0;
   font-size: 0.68rem;
@@ -277,6 +295,125 @@
 .battle-turn-delta.is-defender {
   border-color: rgba(107, 160, 219, 0.58);
   color: #bbd7ff;
+}
+
+.minimax-verdict-card {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 59;
+  width: min(560px, 58vw);
+  transform: translateX(-50%);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--winner-color, #d89f63) 72%, #f6d5ad 28%);
+  background:
+    radial-gradient(120% 150% at 50% 0%, color-mix(in srgb, var(--winner-color, #d89f63) 22%, transparent 78%), transparent 56%),
+    linear-gradient(180deg, rgba(24, 16, 11, 0.96), rgba(8, 7, 6, 0.98));
+  box-shadow:
+    0 24px 58px rgba(0, 0, 0, 0.64),
+    0 0 34px color-mix(in srgb, var(--winner-color, #d89f63) 28%, transparent 72%),
+    inset 0 1px 0 rgba(255, 231, 190, 0.12);
+  padding: 14px 16px 13px;
+  color: #f5dfbd;
+  pointer-events: none;
+  animation: minimaxVerdictReveal 0.42s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.minimax-verdict-kicker,
+.minimax-verdict-label,
+.minimax-verdict-footer {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+}
+
+.minimax-verdict-kicker {
+  color: color-mix(in srgb, var(--winner-color, #d89f63) 62%, #f4d8ae 38%);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.minimax-verdict-main {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.minimax-verdict-label {
+  color: #aa9983;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.minimax-verdict-main h3 {
+  margin: 2px 0 0;
+  color: #fff1d4;
+  font-size: clamp(1.08rem, 2vw, 1.58rem);
+  line-height: 1.05;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.minimax-verdict-stamp {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--winner-color, #d89f63) 74%, #fff 26%);
+  border-radius: 4px;
+  padding: 7px 10px;
+  color: #fff2d8;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--winner-color, #d89f63) 16%, transparent 84%);
+}
+
+.minimax-verdict-region {
+  margin: 10px 0 0;
+  color: #e6c99e;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.minimax-verdict-metrics {
+  margin-top: 11px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.minimax-verdict-metrics span {
+  min-width: 0;
+  border: 1px solid rgba(176, 140, 96, 0.32);
+  border-radius: 6px;
+  background: rgba(9, 8, 7, 0.54);
+  padding: 7px 8px;
+  color: #b9a88e;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.minimax-verdict-metrics strong {
+  display: block;
+  margin-top: 3px;
+  color: #ffe2af;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+
+.minimax-verdict-footer {
+  margin-top: 10px;
+  color: #a99880;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  font-weight: 800;
 }
 
 .action-marker {
@@ -428,38 +565,69 @@
 .battle-skirmish-overlay {
   position: absolute;
   left: 50%;
-  top: 8%;
-  width: min(42%, 560px);
-  height: min(42%, 320px);
+  top: 7%;
+  width: min(62%, 880px);
+  height: min(50%, 430px);
   transform: translateX(-50%);
-  z-index: 5;
+  z-index: 54;
   border-radius: 4px;
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(80% 65% at 50% 40%, rgba(124, 96, 76, 0.14), rgba(0, 0, 0, 0.82)),
-    linear-gradient(180deg, rgba(14, 13, 12, 0.84), rgba(9, 9, 9, 0.92));
-  border: 1px solid rgba(108, 97, 84, 0.48);
+    radial-gradient(80% 65% at 50% 38%, rgba(128, 104, 84, 0.16), rgba(0, 0, 0, 0.84)),
+    linear-gradient(180deg, rgba(14, 13, 12, 0.9), rgba(5, 5, 5, 0.96));
+  border: 1px solid rgba(153, 135, 112, 0.56);
   box-shadow:
-    0 22px 34px rgba(0, 0, 0, 0.52),
-    inset 0 0 36px rgba(0, 0, 0, 0.52);
+    0 28px 58px rgba(0, 0, 0, 0.66),
+    0 0 42px rgba(124, 76, 54, 0.18),
+    inset 0 0 56px rgba(0, 0, 0, 0.68);
+}
+
+.battle-skirmish-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(105deg, transparent 0%, rgba(255, 224, 185, 0.14) 47%, rgba(255, 255, 255, 0.34) 50%, rgba(255, 208, 163, 0.14) 53%, transparent 100%),
+    radial-gradient(circle at 50% 45%, rgba(224, 161, 112, 0.2), transparent 44%);
 }
 
 .battle-skirmish-overlay::after {
   content: '';
   position: absolute;
   inset: 0;
+  z-index: 3;
+  pointer-events: none;
   background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.42), transparent 18%, transparent 82%, rgba(0, 0, 0, 0.42)),
     repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.016) 0, rgba(255, 255, 255, 0.016) 1px, transparent 1px, transparent 3px),
-    radial-gradient(120% 80% at 50% 5%, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.26));
+    radial-gradient(120% 80% at 50% 5%, rgba(255, 255, 255, 0.026), rgba(0, 0, 0, 0.3));
 }
 
 .battle-skirmish-overlay.is-impact {
-  animation: skirmishImpact 0.28s linear 1;
+  animation: skirmishImpact 0.34s linear 1;
+}
+
+.battle-skirmish-overlay.is-attack::before {
+  animation: skirmishSteelFlash 0.68s ease-out 1;
+}
+
+.battle-skirmish-overlay.is-guard {
+  box-shadow:
+    0 28px 58px rgba(0, 0, 0, 0.66),
+    0 0 34px rgba(92, 126, 164, 0.16),
+    inset 0 0 56px rgba(0, 0, 0, 0.68);
+}
+
+.battle-skirmish-overlay.is-withdraw {
+  filter: saturate(0.82) contrast(1.08) brightness(0.88);
 }
 
 .battle-skirmish-overlay.is-slowmo {
-  filter: saturate(0.92) contrast(1.06);
+  filter: saturate(0.96) contrast(1.12);
 }
 
 .battle-skirmish-overlay.is-slowmo::after {
@@ -471,20 +639,24 @@
 .battle-skirmish-overlay canvas {
   width: 100% !important;
   height: 100% !important;
+  position: relative;
+  z-index: 1;
 }
 
 .battle-skirmish-hud {
   position: absolute;
-  left: 10px;
-  bottom: 8px;
-  color: #b9b0a4;
-  font-size: 0.68rem;
-  letter-spacing: 0.1em;
+  left: 14px;
+  bottom: 12px;
+  z-index: 4;
+  color: #cfc5b7;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  border: 1px solid rgba(112, 103, 93, 0.56);
+  border: 1px solid rgba(143, 128, 109, 0.62);
   border-radius: 3px;
-  padding: 4px 7px;
-  background: rgba(15, 14, 13, 0.86);
+  padding: 7px 12px;
+  background: rgba(8, 8, 8, 0.88);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
 }
 
 .battle-path-trace {
@@ -3327,11 +3499,49 @@
   0% {
     transform: translateX(-50%) scale(1);
   }
+  18% {
+    transform: translateX(calc(-50% - 7px)) scale(1.012);
+  }
   40% {
-    transform: translateX(-50%) scale(1.02);
+    transform: translateX(calc(-50% + 5px)) scale(1.024);
+  }
+  70% {
+    transform: translateX(calc(-50% - 2px)) scale(1.006);
   }
   100% {
     transform: translateX(-50%) scale(1);
+  }
+}
+
+@keyframes skirmishSteelFlash {
+  0%,
+  24% {
+    opacity: 0;
+    transform: translateX(-42%) skewX(-18deg);
+  }
+  38% {
+    opacity: 0.92;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(46%) skewX(-18deg);
+  }
+}
+
+@keyframes minimaxVerdictReveal {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(18px) scale(0.96);
+    filter: blur(8px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+    filter: blur(0);
   }
 }
 
@@ -3696,6 +3906,19 @@
     width: min(90vw, 620px);
     padding: 14px 16px;
     font-size: clamp(0.78rem, 2.3vw, 0.96rem);
+  }
+
+  .minimax-verdict-card {
+    width: min(92vw, 560px);
+    bottom: 14px;
+  }
+
+  .minimax-verdict-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .minimax-verdict-metrics span {
+    white-space: normal;
   }
 
   .ai-decision-layout {

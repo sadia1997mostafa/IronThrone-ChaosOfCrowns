@@ -137,6 +137,30 @@ type BattleStepSummary = {
   resolutionText: string
 }
 
+type BattleCombatCue = {
+  id: number
+  actorSide: 'attacker' | 'defender'
+  action: BattleAction
+  counterAction?: BattleAction | null
+  round: number
+}
+
+type BattleOutcomeSummary = {
+  id: number
+  winnerHouseId: HouseId
+  winnerHouseLabel: string
+  loserHouseLabel: string
+  regionName: string
+  previousOwnerLabel: string
+  nextOwnerLabel: string
+  attackerHouseLabel: string
+  defenderHouseLabel: string
+  attackerArmy: number
+  defenderArmy: number
+  attackerWon: boolean
+  score?: number
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const formatActionLabel = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
 const AUTO_SIMULATION_STEP_MS = 1150
@@ -249,8 +273,12 @@ export default function GOTMap() {
   const [isSimulationSequenceBusy, setIsSimulationSequenceBusy] = useState(false)
   const [battlePlaybackPaused, setBattlePlaybackPaused] = useState(false)
   const [actionCue, setActionCue] = useState<ActionCue | null>(null)
+  const [battleCombatCue, setBattleCombatCue] = useState<BattleCombatCue | null>(null)
+  const [battleOutcome, setBattleOutcome] = useState<BattleOutcomeSummary | null>(null)
   const floatingIdRef = useRef(0)
   const actionCueIdRef = useRef(0)
+  const battleCombatCueIdRef = useRef(0)
+  const battleOutcomeIdRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const previousRegionOwnersRef = useRef<Record<RegionId, HouseId>>({ ...INITIAL_OWNERS_BY_REGION })
   const bannerTransitionTimersRef = useRef<Partial<Record<RegionId, number>>>({})
@@ -875,6 +903,7 @@ export default function GOTMap() {
     setImpactSlowMo(false)
     setAttackSource(null)
     setBattleStepSummary(null)
+    setBattleCombatCue(null)
   }
 
   const getAudioCtx = () => {
@@ -942,6 +971,86 @@ export default function GOTMap() {
     osc.stop(now + 0.31)
   }
 
+  const playGameStartCue = () => {
+    const ctx = getAudioCtx()
+    if (!ctx) return
+
+    void ctx.resume().catch(() => {})
+
+    const now = ctx.currentTime
+    const master = ctx.createGain()
+    master.gain.value = 0.05
+    master.connect(ctx.destination)
+
+    const notes = [392, 493.88, 587.33]
+
+    notes.forEach((frequency, index) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = index === 0 ? 'triangle' : 'sine'
+      osc.frequency.setValueAtTime(frequency, now + index * 0.11)
+      osc.frequency.linearRampToValueAtTime(frequency * 1.03, now + index * 0.11 + 0.1)
+      gain.gain.setValueAtTime(0.001, now + index * 0.11)
+      gain.gain.linearRampToValueAtTime(0.55 - index * 0.08, now + index * 0.11 + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.11 + 0.18)
+      osc.connect(gain)
+      gain.connect(master)
+      osc.start(now + index * 0.11)
+      osc.stop(now + index * 0.11 + 0.2)
+    })
+
+    const shimmer = ctx.createOscillator()
+    const shimmerGain = ctx.createGain()
+    shimmer.type = 'square'
+    shimmer.frequency.setValueAtTime(784, now)
+    shimmer.frequency.exponentialRampToValueAtTime(988, now + 0.35)
+    shimmerGain.gain.setValueAtTime(0.001, now)
+    shimmerGain.gain.linearRampToValueAtTime(0.18, now + 0.05)
+    shimmerGain.gain.exponentialRampToValueAtTime(0.001, now + 0.36)
+    shimmer.connect(shimmerGain)
+    shimmerGain.connect(master)
+    shimmer.start(now)
+    shimmer.stop(now + 0.38)
+  }
+
+  const playBattleStartCue = () => {
+    const ctx = getAudioCtx()
+    if (!ctx) return
+
+    void ctx.resume().catch(() => {})
+
+    const now = ctx.currentTime
+    const master = ctx.createGain()
+    master.gain.value = 0.055
+    master.connect(ctx.destination)
+
+    const rumble = ctx.createOscillator()
+    const rumbleGain = ctx.createGain()
+    rumble.type = 'sawtooth'
+    rumble.frequency.setValueAtTime(168, now)
+    rumble.frequency.exponentialRampToValueAtTime(84, now + 0.24)
+    rumbleGain.gain.setValueAtTime(0.001, now)
+    rumbleGain.gain.linearRampToValueAtTime(0.9, now + 0.03)
+    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
+    rumble.connect(rumbleGain)
+    rumbleGain.connect(master)
+    rumble.start(now)
+    rumble.stop(now + 0.28)
+
+    const hit = ctx.createOscillator()
+    const hitGain = ctx.createGain()
+    hit.type = 'triangle'
+    hit.frequency.setValueAtTime(96, now + 0.02)
+    hit.frequency.exponentialRampToValueAtTime(58, now + 0.28)
+    hitGain.gain.setValueAtTime(0.001, now + 0.02)
+    hitGain.gain.linearRampToValueAtTime(0.72, now + 0.06)
+    hitGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
+    hit.connect(hitGain)
+    hitGain.connect(master)
+    hit.start(now + 0.02)
+    hit.stop(now + 0.32)
+  }
+
   const closeBattleModal = () => {
     setIsBattleModalOpen(false)
     setBattleContext(null)
@@ -964,6 +1073,7 @@ export default function GOTMap() {
     setAttackSource(sourceId)
     setSelectedRegion(targetId)
     setBattleResult(null)
+    setBattleOutcome(null)
     setAiBattleTree(snapshot)
     setBattleContext({
       attackerId: sourceId,
@@ -997,6 +1107,7 @@ export default function GOTMap() {
       await wait(cinematicDelay(480))
     }
     setBattlePhase('march')
+    playBattleStartCue()
     playWarCue('march')
     setBattlePath({ from: sourceId, to: targetId })
 
@@ -1268,7 +1379,8 @@ export default function GOTMap() {
     attackerHouseId: HouseId,
     attackerHouseLabel: string,
     defenderHouseId: HouseId,
-    defenderHouseLabel: string
+    defenderHouseLabel: string,
+    score?: number
   ) => {
     const resolvedOwner = resolveBattleOwner(
       finalState,
@@ -1313,6 +1425,21 @@ export default function GOTMap() {
 
     const ownershipSummary = `${regions[capturedRegionId].name}: ${previousOwnerLabel} -> ${nextOwnerLabel}`
     setLastOwnershipChange(ownershipSummary)
+    setBattleOutcome({
+      id: ++battleOutcomeIdRef.current,
+      winnerHouseId: resolvedOwner.houseId,
+      winnerHouseLabel: resolvedOwner.house,
+      loserHouseLabel: attackerWon ? defenderHouseLabel : attackerHouseLabel,
+      regionName: regions[capturedRegionId].name,
+      previousOwnerLabel,
+      nextOwnerLabel,
+      attackerHouseLabel,
+      defenderHouseLabel,
+      attackerArmy: finalState.attacker_army,
+      defenderArmy: finalState.defender_army,
+      attackerWon,
+      score,
+    })
     addEvent(`Ownership update: ${ownershipSummary}.`)
 
     setSimulationPhase('ending')
@@ -1355,7 +1482,7 @@ export default function GOTMap() {
     )
 
     await wait(autoMode ? AUTO_SIMULATION_BATTLE_PAUSE_MS / 2 : AUTO_SIMULATION_BATTLE_PAUSE_MS)
-    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house)
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house, result.score)
   }
 
   const runAutoMinimaxBattlePlayback = async (sourceId: RegionId, targetId: RegionId, autoMode = true) => {
@@ -1378,6 +1505,7 @@ export default function GOTMap() {
 
       const chosenChild = node.children[chosenIndex]
       const actingHouse = node.nodeType === 'max' ? attacker.house : defender.house
+      const actorSide = node.nodeType === 'max' ? 'attacker' : 'defender'
       const parsed = parseBattleStateSummary(chosenChild.next.stateSummary)
       const actionCueType: DecisionAction =
         chosenChild.action === BattleAction.Attack
@@ -1385,6 +1513,19 @@ export default function GOTMap() {
           : chosenChild.action === BattleAction.Guard
             ? 'guard'
             : 'withdraw'
+
+      setBattleCombatCue({
+        id: ++battleCombatCueIdRef.current,
+        actorSide,
+        action: chosenChild.action,
+        counterAction: node.nodeType === 'min' ? pendingAttackerAction : null,
+        round: currentRound,
+      })
+      setBattlePhase(chosenChild.action === BattleAction.Attack ? 'impact' : chosenChild.action === BattleAction.Withdraw ? 'march' : 'briefing')
+      setImpactSlowMo(chosenChild.action === BattleAction.Attack)
+      if (chosenChild.action === BattleAction.Attack) {
+        setTimeout(() => setImpactSlowMo(false), 760)
+      }
 
       setBattlePlaybackPath(path)
       setBattleMinimaxPopupOpen(true)
@@ -1484,7 +1625,7 @@ export default function GOTMap() {
       }
     }
 
-    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house)
+    applyMinimaxBattleResult(sourceId, targetId, result.finalState, attacker.houseId, attacker.house, defender.houseId, defender.house, result.score)
     setBattlePlaybackPath(null)
     setBattleMinimaxPopupOpen(false)
     return `${result.finalState.region_owner} wins the battle`
@@ -1517,6 +1658,7 @@ export default function GOTMap() {
     setAiBattleTree(null)
     setBattleMinimaxPopupOpen(false)
     setAiSimulationNote(null)
+    setBattleOutcome(null)
     clearBattleVisuals()
     setTurnBanner(`${HOUSE_META[nextFaction].label} takes the field`)
     setTimeout(() => setTurnBanner(''), 1400)
@@ -1770,6 +1912,9 @@ export default function GOTMap() {
     setHasSimulationStarted(true)
     setIsAutoSimulating(true)
     setBattlePlaybackPaused(false)
+    if (!isResume) {
+      playGameStartCue()
+    }
     addEvent(
       isResume
         ? `Auto simulation resumed (${resolvedMode === 'summary' ? 'summary mode' : 'visual mode'}).`
@@ -1892,6 +2037,21 @@ export default function GOTMap() {
 
     const ownershipSummary = `${regions[capturedRegionId].name}: ${previousOwnerLabel} -> ${nextOwnerLabel}`
     setLastOwnershipChange(ownershipSummary)
+    setBattleOutcome({
+      id: ++battleOutcomeIdRef.current,
+      winnerHouseId: resolvedOwner.houseId,
+      winnerHouseLabel: resolvedOwner.house,
+      loserHouseLabel: attackerWon ? defender.house : attacker.house,
+      regionName: regions[capturedRegionId].name,
+      previousOwnerLabel,
+      nextOwnerLabel,
+      attackerHouseLabel: attacker.house,
+      defenderHouseLabel: defender.house,
+      attackerArmy: battleContext.finalState.attacker_army,
+      defenderArmy: battleContext.finalState.defender_army,
+      attackerWon,
+      score: battleContext.projectedScore,
+    })
     addEvent(`Ownership update: ${ownershipSummary}.`)
 
     setSimulationPhase('ending')
@@ -1928,7 +2088,7 @@ export default function GOTMap() {
       >
         {turnBanner ? <div className="turn-banner">{turnBanner}</div> : null}
         {decisionStageBanner ? <div className="decision-stage-banner">{decisionStageBanner}</div> : null}
-        {aiVisualsEnabled && actionCue ? (
+        {aiVisualsEnabled && actionCue && !(simulationPhase === 'ending' && battleOutcome) ? (
           <div
             className={`action-cue action-cue-${actionCue.action}`}
             style={{ ['--cue-color' as string]: HOUSE_META[actionCue.houseId].color }}
@@ -1970,6 +2130,47 @@ export default function GOTMap() {
             ) : null}
           </div>
         ) : null}
+        {simulationPhase === 'ending' && battleOutcome ? (
+          <div
+            key={battleOutcome.id}
+            className="minimax-verdict-card"
+            style={{ ['--winner-color' as string]: HOUSE_META[battleOutcome.winnerHouseId].color }}
+            aria-live="polite"
+          >
+            <p className="minimax-verdict-kicker">Minimax Verdict</p>
+            <div className="minimax-verdict-main">
+              <div>
+                <p className="minimax-verdict-label">Victor</p>
+                <h3>{battleOutcome.winnerHouseLabel}</h3>
+              </div>
+              <span className="minimax-verdict-stamp">
+                {battleOutcome.previousOwnerLabel === battleOutcome.nextOwnerLabel ? 'Held' : 'Captured'}
+              </span>
+            </div>
+            <p className="minimax-verdict-region">
+              {battleOutcome.regionName}: {battleOutcome.previousOwnerLabel} {'->'} {battleOutcome.nextOwnerLabel}
+            </p>
+            <div className="minimax-verdict-metrics">
+              <span>
+                {battleOutcome.attackerHouseLabel}
+                <strong>{battleOutcome.attackerArmy}</strong>
+              </span>
+              <span>
+                {battleOutcome.defenderHouseLabel}
+                <strong>{battleOutcome.defenderArmy}</strong>
+              </span>
+              {typeof battleOutcome.score === 'number' ? (
+                <span>
+                  Score
+                  <strong>{battleOutcome.score}</strong>
+                </span>
+              ) : null}
+            </div>
+            <p className="minimax-verdict-footer">
+              {battleOutcome.loserHouseLabel} forced from the deciding line of play.
+            </p>
+          </div>
+        ) : null}
         {isCinematicActive && <div className="map-cinematic-dim" aria-hidden />}
 
         <img
@@ -2000,6 +2201,7 @@ export default function GOTMap() {
             weaponSources={SKIRMISH_WEAPONS}
             phase={battlePhase === 'impact' ? 'impact' : battlePhase === 'march' ? 'march' : 'briefing'}
             slowMo={impactSlowMo}
+            combatCue={battleCombatCue}
           />
         ) : null}
 
