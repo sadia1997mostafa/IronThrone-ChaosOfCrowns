@@ -19,6 +19,7 @@ import SimulationBar from './SimulationBar'
 import { type HouseId, regionData } from '@/data/regionData'
 import { pickAIDecision, previewFuzzyInputs } from '@/lib/ai/aiController'
 import type { AIDecisionTrace, FuzzyStrategicOutput } from '@/lib/ai/types'
+import { gameAudio } from '@/lib/audio/gameAudio'
 import { createInitialDiplomacy, PLAYABLE_HOUSES, type DiplomacyMatrix, type RelationState } from '@/lib/helpers/diplomacy'
 import { BATTLE_LOSS_PERCENT, BattleAction, chooseBestMove, createBattleState, type BattleState } from '@/lib/minimax/battleMinimax'
 
@@ -450,6 +451,29 @@ export default function GOTMap() {
   useEffect(() => {
     battlePlaybackPausedRef.current = battlePlaybackPaused
   }, [battlePlaybackPaused])
+
+  useEffect(() => {
+    const unlockAudio = () => gameAudio.unlock()
+    window.addEventListener('pointerdown', unlockAudio, { once: true })
+    window.addEventListener('keydown', unlockAudio, { once: true })
+
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio)
+      window.removeEventListener('keydown', unlockAudio)
+      gameAudio.stopAllLoops()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (hasSimulationStarted) {
+      gameAudio.stopLoop('prelude')
+      gameAudio.startLoop('ambience')
+      return
+    }
+
+    gameAudio.stopLoop('ambience')
+    gameAudio.startLoop('prelude')
+  }, [hasSimulationStarted])
 
   useEffect(() => {
     const changedRegions: Array<{ regionId: RegionId; previousOwner: HouseId }> = []
@@ -896,6 +920,7 @@ export default function GOTMap() {
   }
 
   const clearBattleVisuals = () => {
+    gameAudio.stopLoop('march')
     setBattlePath(null)
     setClashRegion(null)
     setIsCinematicActive(false)
@@ -917,58 +942,18 @@ export default function GOTMap() {
   }
 
   const playWarCue = (type: 'march' | 'impact' | 'result') => {
-    const ctx = getAudioCtx()
-    if (!ctx) return
-
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.value = 0.055
-    master.connect(ctx.destination)
-
     if (type === 'march') {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'triangle'
-      osc.frequency.setValueAtTime(72, now)
-      osc.frequency.linearRampToValueAtTime(62, now + 0.18)
-      gain.gain.setValueAtTime(0.001, now)
-      gain.gain.linearRampToValueAtTime(0.7, now + 0.03)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.19)
-      osc.connect(gain)
-      gain.connect(master)
-      osc.start(now)
-      osc.stop(now + 0.2)
+      gameAudio.startLoop('march')
       return
     }
 
     if (type === 'impact') {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sawtooth'
-      osc.frequency.setValueAtTime(240, now)
-      osc.frequency.exponentialRampToValueAtTime(70, now + 0.22)
-      gain.gain.setValueAtTime(0.001, now)
-      gain.gain.linearRampToValueAtTime(1, now + 0.015)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24)
-      osc.connect(gain)
-      gain.connect(master)
-      osc.start(now)
-      osc.stop(now + 0.25)
+      gameAudio.stopLoop('march')
+      gameAudio.play('battleImpact')
       return
     }
 
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(108, now)
-    osc.frequency.exponentialRampToValueAtTime(74, now + 0.28)
-    gain.gain.setValueAtTime(0.001, now)
-    gain.gain.linearRampToValueAtTime(0.55, now + 0.05)
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
-    osc.connect(gain)
-    gain.connect(master)
-    osc.start(now)
-    osc.stop(now + 0.31)
+    gameAudio.play('victory')
   }
 
   const playGameStartCue = () => {
@@ -1014,41 +999,11 @@ export default function GOTMap() {
   }
 
   const playBattleStartCue = () => {
-    const ctx = getAudioCtx()
-    if (!ctx) return
+    gameAudio.play('battleStart')
+  }
 
-    void ctx.resume().catch(() => {})
-
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.value = 0.055
-    master.connect(ctx.destination)
-
-    const rumble = ctx.createOscillator()
-    const rumbleGain = ctx.createGain()
-    rumble.type = 'sawtooth'
-    rumble.frequency.setValueAtTime(168, now)
-    rumble.frequency.exponentialRampToValueAtTime(84, now + 0.24)
-    rumbleGain.gain.setValueAtTime(0.001, now)
-    rumbleGain.gain.linearRampToValueAtTime(0.9, now + 0.03)
-    rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26)
-    rumble.connect(rumbleGain)
-    rumbleGain.connect(master)
-    rumble.start(now)
-    rumble.stop(now + 0.28)
-
-    const hit = ctx.createOscillator()
-    const hitGain = ctx.createGain()
-    hit.type = 'triangle'
-    hit.frequency.setValueAtTime(96, now + 0.02)
-    hit.frequency.exponentialRampToValueAtTime(58, now + 0.28)
-    hitGain.gain.setValueAtTime(0.001, now + 0.02)
-    hitGain.gain.linearRampToValueAtTime(0.72, now + 0.06)
-    hitGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
-    hit.connect(hitGain)
-    hitGain.connect(master)
-    hit.start(now + 0.02)
-    hit.stop(now + 0.32)
+  const playBattleResultCue = (attackerWon: boolean) => {
+    gameAudio.play(attackerWon ? 'victory' : 'defeat')
   }
 
   const closeBattleModal = () => {
@@ -1440,6 +1395,7 @@ export default function GOTMap() {
       attackerWon,
       score,
     })
+    playBattleResultCue(attackerWon)
     addEvent(`Ownership update: ${ownershipSummary}.`)
 
     setSimulationPhase('ending')
@@ -1936,6 +1892,8 @@ export default function GOTMap() {
     if (!fullControlWinner) return
     setIsAutoSimulating(false)
     setShowVictoryCelebration(true)
+    gameAudio.stopLoop('march')
+    gameAudio.play('victory', 1.1)
     addEvent(`Throne victory declared: ${HOUSE_META[fullControlWinner].label} reached ${THRONE_REGION_WIN_THRESHOLD} regions and wins the game.`)
   }, [fullControlWinner])
 
@@ -2010,7 +1968,7 @@ export default function GOTMap() {
       addFloatingText(targetPos.x, targetPos.y, `${targetArmy} Occupy`, 'positive')
       addEvent(`${defender.name} was captured by ${attacker.house} using minimax battle resolution.`)
       setBattleResult(`${attacker.house} captures ${defender.name}`)
-      playWarCue('result')
+      playBattleResultCue(true)
     } else {
       setRegions((prev) => ({
         ...prev,
@@ -2032,7 +1990,7 @@ export default function GOTMap() {
       addFloatingText(targetPos.x, targetPos.y, `${targetArmy} Hold`, 'neutral')
       addEvent(`${defender.house} wins and captures ${attacker.name} after minimax battle resolution.`)
       setBattleResult(`${defender.house} captures ${attacker.name}`)
-      playWarCue('result')
+      playBattleResultCue(false)
     }
 
     const ownershipSummary = `${regions[capturedRegionId].name}: ${previousOwnerLabel} -> ${nextOwnerLabel}`
